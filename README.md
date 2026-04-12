@@ -30,15 +30,32 @@ It starts with a blank project for real use and supports import/export of pretty
 
 This repository includes a production build that can be launched without `npm run dev`.
 
+### Recommended Download Flow
+
+1. Download or clone the repository
+2. Keep the folder structure intact
+3. Launch the app from the repository root using the platform launcher below
+
+This works because the portable build is already included under `app/dist/`.
+
 ### Mac
 
 Double-click `Launch Governance Register.command`
+
+If macOS warns that the file came from the internet, use the normal security prompt flow to allow it to open.
 
 ### Windows
 
 Double-click `Launch Governance Register.bat`
 
 These launchers open the built app from `app/dist/index.html` in the default browser.
+
+### What To Expect
+
+- No package installation is required for normal use
+- No backend or database is required
+- The app runs in the browser, but from local files included in this repo
+- Your working data stays local unless you export and share a snapshot yourself
 
 For more portable-launch notes, see [docs/portable-app.md](docs/portable-app.md).
 
@@ -51,7 +68,19 @@ To load example content for demos or training:
 1. Open the app
 2. Go to `Import / Export`
 3. Download the bundled demo snapshot
-4. Import that snapshot back into the app
+4. Import that snapshot into the app
+
+The bundled demo snapshot is included in the portable build so users can explore a populated example without affecting the default blank starting state.
+
+## Release Use On GitHub
+
+For GitHub visitors, the simplest path is:
+
+1. Download the repository as a ZIP or clone it
+2. Extract it to a normal local folder
+3. Launch with `Launch Governance Register.command` on Mac or `Launch Governance Register.bat` on Windows
+
+If you plan to share the tool internally, distributing the full repository contents is important because the launchers expect the built app to remain at `app/dist/index.html`.
 
 ## Development
 
