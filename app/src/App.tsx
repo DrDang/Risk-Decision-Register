@@ -203,19 +203,18 @@ function normalizeRiskStatement(value: string) {
   return `IF ${trimmed.replace(/^IF\s+/i, '')}, THEN consequence to be defined.`;
 }
 
-function buildRiskStatement(trigger: string, consequence: string, resultingIn: string) {
+function buildRiskStatement(trigger: string, consequence: string, _resultingIn?: string) {
   const cleanTrigger = trigger.trim().replace(/\s+/g, ' ');
   const cleanConsequence = consequence.trim().replace(/\s+/g, ' ');
-  const cleanResultingIn = resultingIn.trim().replace(/\s+/g, ' ');
 
-  return `IF ${cleanTrigger || 'condition is triggered'}, THEN ${cleanConsequence || 'consequence occurs'}, RESULTING IN ${cleanResultingIn || 'business impact to be defined'}.`;
+  return `IF ${cleanTrigger || 'condition is triggered'}, THEN ${cleanConsequence || 'consequence occurs'}.`;
 }
 
 function renderStatementWithBoldKeywords(statement: string) {
-  const parts = statement.split(/(IF|THEN|RESULTING IN)/g);
+  const parts = statement.split(/(IF|THEN)/g);
 
   return parts.map((part, index) => {
-    const isKeyword = part === 'IF' || part === 'THEN' || part === 'RESULTING IN';
+    const isKeyword = part === 'IF' || part === 'THEN';
     return isKeyword ? (
       <strong key={`${part}-${index}`} className="font-extrabold text-on-surface">
         {part}
@@ -599,6 +598,26 @@ function getRiskLabel(risks: Risk[], riskId: string) {
   return risk ? `${risk.id} - ${risk.title}` : riskId;
 }
 
+function sanitizeRiskId(value: string) {
+  return value.toUpperCase().replace(/\s+/g, '');
+}
+
+function getDecisionPreview(decision: Decision) {
+  return (
+    decision.summary?.trim() ||
+    decision.context?.trim() ||
+    decision.outcome?.trim() ||
+    'No additional detail yet.'
+  );
+}
+
+function splitLines(value: string) {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 function loadRiskScoringModel() {
   if (typeof window === 'undefined') {
     return defaultRiskScoringModel;
@@ -795,10 +814,6 @@ export default function App() {
           nextRisk.statement = buildRiskStatement(nextRisk.trigger, nextRisk.consequence, nextRisk.resultingIn);
         }
 
-        if (updates.resultingIn !== undefined) {
-          nextRisk.statement = buildRiskStatement(nextRisk.trigger, nextRisk.consequence, nextRisk.resultingIn);
-        }
-
         if (updates.statement !== undefined) {
           nextRisk.statement = normalizeRiskStatement(updates.statement);
         }
@@ -831,6 +846,40 @@ export default function App() {
     });
   }
 
+  function handleRenameRisk(riskId: string, nextRiskId: string) {
+    const normalizedNextId = sanitizeRiskId(nextRiskId);
+    if (!normalizedNextId || normalizedNextId === riskId) {
+      return;
+    }
+
+    updateActiveProject((project) => ({
+      ...project,
+      risks: project.risks.map((risk) =>
+        risk.id === riskId
+          ? {
+              ...risk,
+              id: normalizedNextId,
+              lastUpdated: 'Just now',
+              history: [
+                {label: `Risk ID updated (${riskId} -> ${normalizedNextId})`, meta: 'Local edit • Just now'},
+                ...risk.history,
+              ],
+            }
+          : risk,
+      ),
+      decisions: project.decisions.map((decision) => ({
+        ...decision,
+        linkedRisks: decision.linkedRisks.map((linkedRiskId) =>
+          linkedRiskId === riskId ? normalizedNextId : linkedRiskId,
+        ),
+      })),
+    }));
+
+    if (selectedRiskId === riskId) {
+      setSelectedRiskId(normalizedNextId);
+    }
+  }
+
   function handleCreateRisk(input: {
     id: string;
     title: string;
@@ -841,7 +890,6 @@ export default function App() {
     impact: number;
     trigger: string;
     consequence: string;
-    resultingIn: string;
     responseType: Risk['responseType'];
     dueDate: string;
     status: RiskStatus;
@@ -850,10 +898,10 @@ export default function App() {
     const nextRisk: Risk = {
       id: input.id.trim(),
       title: input.title.trim(),
-      statement: buildRiskStatement(input.trigger, input.consequence, input.resultingIn),
+      statement: buildRiskStatement(input.trigger, input.consequence),
       trigger: input.trigger.trim(),
       consequence: input.consequence.trim(),
-      resultingIn: input.resultingIn.trim(),
+      resultingIn: '',
       status: input.status,
       severity: residual.severity,
       owner: input.owner.trim(),
@@ -890,24 +938,26 @@ export default function App() {
   function handleCreateDecision(input: {
     id: string;
     title: string;
-    summary: string;
     status: DecisionStatus;
     deciders: string;
     date: string;
     context: string;
+    decisionDrivers: string[];
+    consideredOptions: string[];
+    outcome: string;
   }) {
     const next: Decision = {
       id: input.id.trim(),
       title: input.title.trim(),
-      summary: input.summary.trim(),
+      summary: '',
       status: input.status,
       deciders: input.deciders.trim(),
       date: input.date.trim(),
       context: input.context.trim(),
       linkedRisks: [],
-      decisionDrivers: [],
-      consideredOptions: [],
-      outcome: '',
+      decisionDrivers: input.decisionDrivers,
+      consideredOptions: input.consideredOptions,
+      outcome: input.outcome.trim(),
       goodConsequences: [],
       badConsequences: [],
       moreInfo: '',
@@ -1040,7 +1090,9 @@ export default function App() {
               scoringModel={riskScoringModel}
               onClose={() => setDrawerOpen(false)}
               onDeleteRisk={handleDeleteRisk}
+              onRenameRisk={handleRenameRisk}
               onUpdateRisk={handleUpdateRisk}
+              existingIds={usedRiskIds}
               ownerOptions={Array.from(new Set<string>(riskRecords.map((risk) => risk.owner)))}
               categoryOptions={Array.from(new Set<string>(riskRecords.map((risk) => risk.category)))}
               linkedDecisionOptions={getDecisionSelectOptions(decisions)}
@@ -1511,13 +1563,11 @@ function CreateRiskModal({
     impact: number;
     trigger: string;
     consequence: string;
-    resultingIn: string;
     responseType: Risk['responseType'];
     dueDate: string;
     status: RiskStatus;
   }) => void;
 }) {
-  const [showScoringGuide, setShowScoringGuide] = useState(false);
   const [form, setForm] = useState({
     id: nextRiskId,
     title: '',
@@ -1528,38 +1578,46 @@ function CreateRiskModal({
     impact: '3',
     trigger: '',
     consequence: '',
-    resultingIn: '',
     responseType: 'Mitigate' as Risk['responseType'],
     dueDate: '',
     status: 'Pending' as RiskStatus,
   });
 
+  function resetRiskDraft() {
+    setForm({
+      id: nextRiskId,
+      title: '',
+      owner: ownerOptions[0] ?? '',
+      category: categoryOptions[0] ?? 'Infrastructure',
+      linkedDecision: 'None',
+      likelihood: '3',
+      impact: '3',
+      trigger: '',
+      consequence: '',
+      responseType: 'Mitigate',
+      dueDate: '',
+      status: 'Pending',
+    });
+  }
+
   useEffect(() => {
-    if (open) {
-      setForm({
-        id: nextRiskId,
-        title: '',
-        owner: ownerOptions[0] ?? '',
-        category: categoryOptions[0] ?? 'Infrastructure',
-        linkedDecision: 'None',
-        likelihood: '3',
-        impact: '3',
-        trigger: '',
-        consequence: '',
-        resultingIn: '',
-        responseType: 'Mitigate',
-        dueDate: '',
-        status: 'Pending',
-      });
-      setShowScoringGuide(false);
+    if (
+      !open &&
+      !form.title &&
+      !form.trigger &&
+      !form.consequence &&
+      !form.dueDate &&
+      form.id !== nextRiskId
+    ) {
+      setForm((current) => ({...current, id: nextRiskId}));
     }
-  }, [open, ownerOptions, categoryOptions, nextRiskId]);
+  }, [form.consequence, form.dueDate, form.id, form.title, form.trigger, nextRiskId, open]);
 
   if (!open) {
     return null;
   }
 
-  const generatedStatement = buildRiskStatement(form.trigger, form.consequence, form.resultingIn);
+  const generatedStatement = buildRiskStatement(form.trigger, form.consequence);
   const scorePreview = Number(form.likelihood) * Number(form.impact);
   const severityPreview = getSeverityFromAssessment(Number(form.likelihood), Number(form.impact));
   const likelihoodDefinition = getScoreDefinition(scoringModel.likelihood, Number(form.likelihood));
@@ -1568,10 +1626,8 @@ function CreateRiskModal({
     !form.id.trim() ? 'Risk ID' : null,
     !form.title.trim() ? 'Risk title' : null,
     !form.owner.trim() ? 'Owner' : null,
-    !form.category.trim() ? 'Category' : null,
     !form.trigger.trim() ? 'Trigger / Condition' : null,
     !form.consequence.trim() ? 'Consequence' : null,
-    !form.resultingIn.trim() ? 'Resulting In' : null,
   ].filter(Boolean) as string[];
   const duplicateId = existingIds.some((id) => id.toUpperCase() === form.id.trim().toUpperCase());
   const isValid = missingFields.length === 0 && !duplicateId;
@@ -1634,19 +1690,6 @@ function CreateRiskModal({
                       <option key={option} value={option} />
                     ))}
                   </datalist>
-                </FormField>
-                <FormField label="Category">
-                  <select
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
-                    onChange={(event) => setForm((current) => ({...current, category: event.target.value}))}
-                    value={form.category}
-                  >
-                    {categoryOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
                 </FormField>
                 <FormField label="Linked decision">
                   <select
@@ -1751,43 +1794,12 @@ function CreateRiskModal({
                   value={form.consequence}
                 />
               </FormField>
-              <FormField label="Resulting In">
-                <textarea
-                  className="min-h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
-                  onChange={(event) => setForm((current) => ({...current, resultingIn: event.target.value}))}
-                  placeholder="Describe the downstream impact"
-                  value={form.resultingIn}
-                />
-              </FormField>
             </div>
 
             <div className="space-y-4 lg:sticky lg:top-0 lg:self-start">
               <div className="rounded-3xl bg-surface-container-low px-5 py-4">
                 <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Risk Preview</div>
                 <p className="text-sm leading-relaxed text-on-surface">{renderStatementWithBoldKeywords(generatedStatement)}</p>
-              </div>
-              <div className="rounded-3xl bg-white px-5 py-4 ring-1 ring-slate-200">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Scoring Reference</div>
-                  <ScoringGuideButton
-                    open={showScoringGuide}
-                    onClick={() => setShowScoringGuide((current) => !current)}
-                  />
-                </div>
-                <div className="space-y-3 text-sm text-on-surface-variant">
-                  <div>
-                    <span className="font-semibold text-on-surface">
-                      Likelihood {likelihoodDefinition?.value} - {likelihoodDefinition?.label}
-                    </span>
-                    <div className="mt-1">{likelihoodDefinition?.description}</div>
-                  </div>
-                  <div>
-                    <span className="font-semibold text-on-surface">
-                      Impact {impactDefinition?.value} - {impactDefinition?.label}
-                    </span>
-                    <div className="mt-1">{impactDefinition?.description}</div>
-                  </div>
-                </div>
               </div>
               <div className="rounded-3xl bg-white px-5 py-4 ring-1 ring-slate-200">
                 <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Initial Assessment</div>
@@ -1799,12 +1811,6 @@ function CreateRiskModal({
                   <DrawerMeta label="Linked Decision" value={form.linkedDecision} />
                 </div>
               </div>
-              {showScoringGuide ? (
-                <ScoringGuidePanel
-                  impactDefinitions={scoringModel.impact}
-                  likelihoodDefinitions={scoringModel.likelihood}
-                />
-              ) : null}
             </div>
           </div>
 
@@ -1827,7 +1833,7 @@ function CreateRiskModal({
               <button
                 className="rounded-xl bg-gradient-to-br from-primary to-primary-dim px-4 py-2.5 text-sm font-bold text-on-primary shadow-lg shadow-primary/20 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={!isValid}
-                onClick={() =>
+                onClick={() => {
                   onCreate({
                     id: form.id,
                     title: form.title,
@@ -1838,12 +1844,12 @@ function CreateRiskModal({
                     impact: Number(form.impact),
                     trigger: form.trigger,
                     consequence: form.consequence,
-                    resultingIn: form.resultingIn,
                     responseType: form.responseType,
                     dueDate: form.dueDate,
                     status: form.status,
-                  })
-                }
+                  });
+                  resetRiskDraft();
+                }}
                 type="button"
               >
                 Create Risk
@@ -2809,7 +2815,7 @@ function DecisionRegisterPage({
       decision.deciders,
       decision.date,
       decision.linkedRisks.map((riskId) => getRiskLabel(risks, riskId)).join(' | '),
-      decision.summary,
+      getDecisionPreview(decision),
     ]);
     const csv = [headers, ...rows]
       .map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(','))
@@ -2896,7 +2902,7 @@ function DecisionRegisterPage({
                   <td className="px-5 py-5">
                     <div className="space-y-0.5">
                       <div className={`text-sm font-bold ${dimmed ? 'text-slate-600' : 'text-on-surface'}`}>{decision.title}</div>
-                      <div className="line-clamp-1 text-xs text-on-surface-variant">{decision.summary}</div>
+                      <div className="line-clamp-1 text-xs text-on-surface-variant">{getDecisionPreview(decision)}</div>
                     </div>
                   </td>
                   <td className="whitespace-nowrap px-5 py-5">
@@ -3015,92 +3021,6 @@ function DecisionDetailPanel({
     setSavedLabel(label);
   }
 
-  function EditTextarea({field, value, draft, setDraft, editing, setEditing, placeholder, label}: {
-    field: keyof Decision; value: string; draft: string; setDraft: (v: string) => void;
-    editing: boolean; setEditing: (v: boolean) => void; placeholder: string; label: string;
-  }) {
-    return editing ? (
-      <div>
-        <textarea
-          autoFocus
-          className="min-h-28 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/40"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-        <div className="mt-2 flex gap-2">
-          <button
-            className="rounded-full bg-primary px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-on-primary transition hover:opacity-90"
-            onClick={() => { save({[field]: draft} as Partial<Decision>, `${label} updated`); setEditing(false); }}
-            type="button"
-          >Save</button>
-          <button
-            className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-200"
-            onClick={() => setEditing(false)}
-            type="button"
-          >Cancel</button>
-        </div>
-      </div>
-    ) : (
-      <div className="group relative">
-        <p className="text-sm leading-relaxed text-on-surface">
-          {value || <span className="text-slate-400">{placeholder}</span>}
-        </p>
-        <button
-          className="absolute right-0 top-0 rounded-full p-1 text-slate-300 opacity-0 transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100"
-          onClick={() => { setDraft(value); setEditing(true); }}
-          type="button"
-        >
-          <span className="material-symbols-outlined text-[14px]">edit</span>
-        </button>
-      </div>
-    );
-  }
-
-  function EditableList({items, placeholder, onAdd, onRemove, numbered = false}: {
-    items: string[]; placeholder: string;
-    onAdd: (v: string) => void; onRemove: (i: number) => void; numbered?: boolean;
-  }) {
-    const [draft, setDraft] = useState('');
-    return (
-      <div>
-        <div className="space-y-1.5">
-          {items.map((item, i) => (
-            <div key={i} className="group flex items-start gap-2 rounded-xl px-3 py-2 transition hover:bg-slate-50">
-              <span className="mt-0.5 shrink-0 text-xs font-bold text-slate-400">
-                {numbered ? `${i + 1}.` : '•'}
-              </span>
-              <span className="flex-1 text-sm text-on-surface">{item}</span>
-              <button
-                className="mt-0.5 shrink-0 rounded-full p-0.5 text-slate-300 opacity-0 transition hover:text-error group-hover:opacity-100"
-                onClick={() => onRemove(i)}
-                type="button"
-              >
-                <span className="material-symbols-outlined text-[13px]">close</span>
-              </button>
-            </div>
-          ))}
-        </div>
-        <div className="mt-2 flex gap-2">
-          <input
-            className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-primary/40"
-            placeholder={placeholder}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && draft.trim()) { onAdd(draft.trim()); setDraft(''); }
-            }}
-          />
-          <button
-            className="rounded-xl bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-200 disabled:opacity-40"
-            disabled={!draft.trim()}
-            onClick={() => { onAdd(draft.trim()); setDraft(''); }}
-            type="button"
-          >Add</button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-5">
       {/* ADR header — status, date, deciders */}
@@ -3172,9 +3092,10 @@ function DecisionDetailPanel({
       {/* Context and Problem Statement */}
       <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Context and Problem Statement</div>
-        <EditTextarea
+        <DecisionEditTextarea
           field="context" value={decision.context} draft={contextDraft} setDraft={setContextDraft}
           editing={editingContext} setEditing={setEditingContext}
+          onSave={save}
           placeholder="Describe the context and the problem being addressed…" label="Context"
         />
       </section>
@@ -3182,7 +3103,7 @@ function DecisionDetailPanel({
       {/* Decision Drivers */}
       <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Decision Drivers</div>
-        <EditableList
+        <EditableDecisionList
           items={decision.decisionDrivers}
           placeholder="Add a decision driver…"
           onAdd={(v) => save({decisionDrivers: [...decision.decisionDrivers, v]}, 'Driver added')}
@@ -3193,7 +3114,7 @@ function DecisionDetailPanel({
       {/* Considered Options */}
       <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Considered Options</div>
-        <EditableList
+        <EditableDecisionList
           numbered
           items={decision.consideredOptions}
           placeholder="Add an option…"
@@ -3205,9 +3126,10 @@ function DecisionDetailPanel({
       {/* Decision Outcome */}
       <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Decision Outcome</div>
-        <EditTextarea
+        <DecisionEditTextarea
           field="outcome" value={decision.outcome} draft={outcomeDraft} setDraft={setOutcomeDraft}
           editing={editingOutcome} setEditing={setEditingOutcome}
+          onSave={save}
           placeholder="Describe the chosen option and why others were rejected…" label="Outcome"
         />
       </section>
@@ -3219,7 +3141,7 @@ function DecisionDetailPanel({
           <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-600">
             <span className="material-symbols-outlined text-[13px]">thumb_up</span> Good
           </div>
-          <EditableList
+          <EditableDecisionList
             items={decision.goodConsequences}
             placeholder="Add a positive consequence…"
             onAdd={(v) => save({goodConsequences: [...decision.goodConsequences, v]}, 'Consequence added')}
@@ -3230,7 +3152,7 @@ function DecisionDetailPanel({
           <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-amber-600">
             <span className="material-symbols-outlined text-[13px]">thumb_down</span> Bad
           </div>
-          <EditableList
+          <EditableDecisionList
             items={decision.badConsequences}
             placeholder="Add a negative consequence…"
             onAdd={(v) => save({badConsequences: [...decision.badConsequences, v]}, 'Consequence added')}
@@ -3242,9 +3164,10 @@ function DecisionDetailPanel({
       {/* More Information */}
       <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">More Information</div>
-        <EditTextarea
+        <DecisionEditTextarea
           field="moreInfo" value={decision.moreInfo} draft={moreInfoDraft} setDraft={setMoreInfoDraft}
           editing={editingMoreInfo} setEditing={setEditingMoreInfo}
+          onSave={save}
           placeholder="Links, references, follow-on decisions…" label="More information"
         />
       </section>
@@ -3330,6 +3253,143 @@ function EditableText({
   );
 }
 
+function DecisionEditTextarea({
+  field,
+  value,
+  draft,
+  setDraft,
+  editing,
+  setEditing,
+  placeholder,
+  label,
+  onSave,
+}: {
+  field: keyof Decision;
+  value: string;
+  draft: string;
+  setDraft: (value: string) => void;
+  editing: boolean;
+  setEditing: (value: boolean) => void;
+  placeholder: string;
+  label: string;
+  onSave: (updates: Partial<Decision>, label: string) => void;
+}) {
+  useEffect(() => {
+    if (editing) {
+      setDraft(value);
+    }
+  }, [editing, value, setDraft]);
+
+  return editing ? (
+    <div>
+      <textarea
+        autoFocus
+        className="min-h-28 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/40"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <div className="mt-2 flex gap-2">
+        <button
+          className="rounded-full bg-primary px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-on-primary transition hover:opacity-90"
+          onClick={() => {
+            onSave({[field]: draft} as Partial<Decision>, `${label} updated`);
+            setEditing(false);
+          }}
+          type="button"
+        >
+          Save
+        </button>
+        <button
+          className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-200"
+          onClick={() => {
+            setDraft(value);
+            setEditing(false);
+          }}
+          type="button"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  ) : (
+    <div className="group relative">
+      <p className="text-sm leading-relaxed text-on-surface">
+        {value || <span className="text-slate-400">{placeholder}</span>}
+      </p>
+      <button
+        className="absolute right-0 top-0 rounded-full p-1 text-slate-300 opacity-0 transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-100"
+        onClick={() => setEditing(true)}
+        type="button"
+      >
+        <span className="material-symbols-outlined text-[14px]">edit</span>
+      </button>
+    </div>
+  );
+}
+
+function EditableDecisionList({
+  items,
+  placeholder,
+  onAdd,
+  onRemove,
+  numbered = false,
+}: {
+  items: string[];
+  placeholder: string;
+  onAdd: (value: string) => void;
+  onRemove: (index: number) => void;
+  numbered?: boolean;
+}) {
+  const [draft, setDraft] = useState('');
+
+  return (
+    <div>
+      <div className="space-y-1.5">
+        {items.map((item, index) => (
+          <div key={`${item}-${index}`} className="group flex items-start gap-2 rounded-xl px-3 py-2 transition hover:bg-slate-50">
+            <span className="mt-0.5 shrink-0 text-xs font-bold text-slate-400">
+              {numbered ? `${index + 1}.` : '•'}
+            </span>
+            <span className="flex-1 text-sm text-on-surface">{item}</span>
+            <button
+              className="mt-0.5 shrink-0 rounded-full p-0.5 text-slate-300 opacity-0 transition hover:text-error group-hover:opacity-100"
+              onClick={() => onRemove(index)}
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[13px]">close</span>
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex gap-2">
+        <input
+          className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none transition focus:border-primary/40"
+          placeholder={placeholder}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && draft.trim()) {
+              onAdd(draft.trim());
+              setDraft('');
+            }
+          }}
+        />
+        <button
+          className="rounded-xl bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-200 disabled:opacity-40"
+          disabled={!draft.trim()}
+          onClick={() => {
+            onAdd(draft.trim());
+            setDraft('');
+          }}
+          type="button"
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CreateDecisionModal({
   open,
   existingIds,
@@ -3344,36 +3404,65 @@ function CreateDecisionModal({
   onCreate: (input: {
     id: string;
     title: string;
-    summary: string;
     status: DecisionStatus;
     deciders: string;
     date: string;
     context: string;
+    decisionDrivers: string[];
+    consideredOptions: string[];
+    outcome: string;
   }) => void;
 }) {
   const [form, setForm] = useState({
     id: nextDecisionId,
     title: '',
-    summary: '',
     status: 'Proposed' as DecisionStatus,
     deciders: '',
     date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
     context: '',
+    decisionDrivers: '',
+    consideredOptions: '',
+    outcome: '',
   });
 
+  function resetDecisionDraft() {
+    setForm({
+      id: nextDecisionId,
+      title: '',
+      status: 'Proposed',
+      deciders: '',
+      date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
+      context: '',
+      decisionDrivers: '',
+      consideredOptions: '',
+      outcome: '',
+    });
+  }
+
   useEffect(() => {
-    if (open) {
-      setForm({
-        id: nextDecisionId,
-        title: '',
-        summary: '',
-        status: 'Proposed',
-        deciders: '',
-        date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
-        context: '',
-      });
+    if (
+      !open &&
+      !form.title &&
+      !form.deciders &&
+      !form.context &&
+      !form.decisionDrivers &&
+      !form.consideredOptions &&
+      !form.outcome &&
+      form.id !== nextDecisionId
+    ) {
+      setForm((current) => ({...current, id: nextDecisionId}));
     }
-  }, [open, nextDecisionId]);
+  }, [
+    form.consideredOptions,
+    form.context,
+    form.deciders,
+    form.decisionDrivers,
+    form.id,
+    form.outcome,
+    form.title,
+    nextDecisionId,
+    open,
+  ]);
 
   if (!open) return null;
 
@@ -3401,7 +3490,7 @@ function CreateDecisionModal({
               <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">Log New Decision</div>
               <h2 className="mt-1 font-headline text-2xl font-extrabold text-on-surface">Record a governance decision</h2>
               <p className="mt-1 text-sm text-on-surface-variant">
-                Fill in the essentials. Decision drivers, options, consequences, and linked risks can be added from the detail panel after saving.
+                Capture the core governance record here so the created decision already aligns with the detail view and downstream discussion.
               </p>
             </div>
             <button className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100" onClick={onClose} type="button">
@@ -3441,15 +3530,6 @@ function CreateDecisionModal({
               />
             </FormField>
 
-            <FormField label="Summary">
-              <input
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-primary/40"
-                placeholder="One-line summary"
-                value={form.summary}
-                onChange={(e) => field('summary', e.target.value)}
-              />
-            </FormField>
-
             <div className="grid grid-cols-2 gap-4">
               <FormField label="Deciders">
                 <input
@@ -3477,6 +3557,33 @@ function CreateDecisionModal({
                 onChange={(e) => field('context', e.target.value)}
               />
             </FormField>
+
+            <FormField label="Decision Drivers">
+              <textarea
+                className="min-h-24 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm leading-relaxed outline-none transition focus:border-primary/40"
+                placeholder="Enter one driver per line"
+                value={form.decisionDrivers}
+                onChange={(e) => field('decisionDrivers', e.target.value)}
+              />
+            </FormField>
+
+            <FormField label="Considered Options">
+              <textarea
+                className="min-h-24 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm leading-relaxed outline-none transition focus:border-primary/40"
+                placeholder="Enter one option per line"
+                value={form.consideredOptions}
+                onChange={(e) => field('consideredOptions', e.target.value)}
+              />
+            </FormField>
+
+            <FormField label="Decision Outcome (optional)">
+              <textarea
+                className="min-h-24 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm leading-relaxed outline-none transition focus:border-primary/40"
+                placeholder="Describe the decision taken and any immediate rationale"
+                value={form.outcome}
+                onChange={(e) => field('outcome', e.target.value)}
+              />
+            </FormField>
           </div>
 
           <div className="border-t border-slate-200 px-6 py-4">
@@ -3494,7 +3601,20 @@ function CreateDecisionModal({
               <button
                 className="rounded-xl bg-gradient-to-br from-primary to-primary-dim px-5 py-2.5 text-sm font-bold text-on-primary shadow-md transition hover:opacity-90 disabled:opacity-40"
                 disabled={!isValid}
-                onClick={() => onCreate(form)}
+                onClick={() => {
+                  onCreate({
+                    id: form.id,
+                    title: form.title,
+                    status: form.status,
+                    deciders: form.deciders,
+                    date: form.date,
+                    context: form.context,
+                    decisionDrivers: splitLines(form.decisionDrivers),
+                    consideredOptions: splitLines(form.consideredOptions),
+                    outcome: form.outcome,
+                  });
+                  resetDecisionDraft();
+                }}
                 type="button"
               >
                 Log Decision
@@ -3513,7 +3633,9 @@ function RiskDrawer({
   scoringModel,
   onClose,
   onDeleteRisk,
+  onRenameRisk,
   onUpdateRisk,
+  existingIds,
   ownerOptions,
   categoryOptions,
   linkedDecisionOptions,
@@ -3524,7 +3646,9 @@ function RiskDrawer({
   scoringModel: RiskScoringModel;
   onClose: () => void;
   onDeleteRisk: (riskId: string) => void;
+  onRenameRisk: (riskId: string, nextRiskId: string) => void;
   onUpdateRisk: (riskId: string, updates: Partial<Risk>, historyLabel: string) => void;
+  existingIds: string[];
   ownerOptions: string[];
   categoryOptions: string[];
   linkedDecisionOptions: SelectOption[];
@@ -3538,10 +3662,12 @@ function RiskDrawer({
   const [pendingScoreChange, setPendingScoreChange] = useState<{field: 'likelihood' | 'impact'; value: number} | null>(null);
   const [scoreChangeReason, setScoreChangeReason] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editingRiskId, setEditingRiskId] = useState(false);
+  const [riskIdDraft, setRiskIdDraft] = useState(risk.id);
+  const [riskIdError, setRiskIdError] = useState('');
   const [draftNarrative, setDraftNarrative] = useState({
     trigger: risk.trigger,
     consequence: risk.consequence,
-    resultingIn: risk.resultingIn,
     mitigation: risk.mitigation,
     contingency: risk.contingency,
   });
@@ -3554,14 +3680,16 @@ function RiskDrawer({
     setPendingScoreChange(null);
     setScoreChangeReason('');
     setConfirmDelete(false);
+    setEditingRiskId(false);
+    setRiskIdDraft(risk.id);
+    setRiskIdError('');
     setDraftNarrative({
       trigger: risk.trigger,
       consequence: risk.consequence,
-      resultingIn: risk.resultingIn,
       mitigation: risk.mitigation,
       contingency: risk.contingency,
     });
-  }, [risk.id, risk.trigger, risk.consequence, risk.resultingIn, risk.mitigation, risk.contingency]);
+  }, [risk.id, risk.trigger, risk.consequence, risk.mitigation, risk.contingency]);
 
   useEffect(() => {
     if (!savedFieldLabel) {
@@ -3577,6 +3705,34 @@ function RiskDrawer({
 
   if (!open) {
     return null;
+  }
+
+  function saveRiskId() {
+    const nextId = sanitizeRiskId(riskIdDraft);
+    const hasDuplicate = existingIds.some(
+      (existingId) => existingId !== risk.id.toUpperCase() && existingId === nextId,
+    );
+
+    if (!nextId) {
+      setRiskIdError('Risk ID is required.');
+      return;
+    }
+
+    if (hasDuplicate) {
+      setRiskIdError('Risk ID already exists.');
+      return;
+    }
+
+    if (nextId === risk.id) {
+      setEditingRiskId(false);
+      setRiskIdError('');
+      return;
+    }
+
+    onRenameRisk(risk.id, nextId);
+    setEditingRiskId(false);
+    setRiskIdError('');
+    setSavedFieldLabel('Risk ID updated');
   }
 
   function saveQuickField(field: QuickEditFieldName, value: string) {
@@ -3637,7 +3793,6 @@ function RiskDrawer({
     setDraftNarrative({
       trigger: risk.trigger,
       consequence: risk.consequence,
-      resultingIn: risk.resultingIn,
       mitigation: risk.mitigation,
       contingency: risk.contingency,
     });
@@ -3649,11 +3804,9 @@ function RiskDrawer({
       {
         trigger: draftNarrative.trigger,
         consequence: draftNarrative.consequence,
-        resultingIn: draftNarrative.resultingIn,
         statement: buildRiskStatement(
           draftNarrative.trigger,
           draftNarrative.consequence,
-          draftNarrative.resultingIn,
         ),
       },
       'Risk statement updated',
@@ -3686,9 +3839,53 @@ function RiskDrawer({
         onClick={(event) => event.stopPropagation()}
       >
       <div className="shrink-0 border-b border-slate-200 px-6 py-5">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">{risk.id}</div>
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+            {editingRiskId ? (
+              <div className="mb-2">
+                <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.22em] text-primary">Risk ID</div>
+                <div className="flex items-center gap-2">
+                  <input
+                    autoFocus
+                    className="w-36 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm font-bold text-on-surface outline-none transition focus:border-primary/40"
+                    onChange={(event) => {
+                      setRiskIdDraft(sanitizeRiskId(event.target.value));
+                      if (riskIdError) setRiskIdError('');
+                    }}
+                    value={riskIdDraft}
+                  />
+                  <button
+                    className="rounded-full bg-primary px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-primary-dim"
+                    onClick={saveRiskId}
+                    type="button"
+                  >
+                    Save
+                  </button>
+                  <button
+                    className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-200"
+                    onClick={() => {
+                      setEditingRiskId(false);
+                      setRiskIdDraft(risk.id);
+                      setRiskIdError('');
+                    }}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {riskIdError ? <div className="mt-1 text-xs text-error">{riskIdError}</div> : null}
+              </div>
+            ) : (
+              <button
+                className="group flex items-center gap-1 rounded-full px-0.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.22em] text-primary transition hover:text-primary-dim"
+                onClick={() => setEditingRiskId(true)}
+                type="button"
+                title="Edit risk ID"
+              >
+                <span>{risk.id}</span>
+                <span className="material-symbols-outlined text-[13px] opacity-0 transition group-hover:opacity-100">edit</span>
+              </button>
+            )}
             <h2 className="mt-1 font-headline text-2xl font-extrabold leading-tight text-on-surface">
               {risk.title}
             </h2>
@@ -3917,7 +4114,6 @@ function RiskDrawer({
             generatedValue={buildRiskStatement(
               draftNarrative.trigger,
               draftNarrative.consequence,
-              draftNarrative.resultingIn,
             )}
             label="Risk Statement"
             onCancel={() => {
@@ -3926,11 +4122,8 @@ function RiskDrawer({
             }}
             onConsequenceChange={(value) => setDraftNarrative((current) => ({...current, consequence: value}))}
             onEdit={() => setEditingStatement(true)}
-            onResultingInChange={(value) => setDraftNarrative((current) => ({...current, resultingIn: value}))}
             onSave={saveStatementEdit}
             onTriggerChange={(value) => setDraftNarrative((current) => ({...current, trigger: value}))}
-            resultingInLabel="Resulting In"
-            resultingInValue={draftNarrative.resultingIn}
             triggerLabel="Trigger / Condition"
             triggerValue={draftNarrative.trigger}
             value={risk.statement}
@@ -4364,13 +4557,10 @@ function RiskStatementField({
   triggerValue,
   consequenceLabel,
   consequenceValue,
-  resultingInLabel,
-  resultingInValue,
   generatedValue,
   onEdit,
   onTriggerChange,
   onConsequenceChange,
-  onResultingInChange,
   onSave,
   onCancel,
 }: {
@@ -4381,13 +4571,10 @@ function RiskStatementField({
   triggerValue: string;
   consequenceLabel: string;
   consequenceValue: string;
-  resultingInLabel: string;
-  resultingInValue: string;
   generatedValue: string;
   onEdit: () => void;
   onTriggerChange: (value: string) => void;
   onConsequenceChange: (value: string) => void;
-  onResultingInChange: (value: string) => void;
   onSave: () => void;
   onCancel: () => void;
 }) {
@@ -4430,14 +4617,6 @@ function RiskStatementField({
               className="min-h-20 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
               onChange={(event) => onConsequenceChange(event.target.value)}
               value={consequenceValue}
-            />
-          </div>
-          <div>
-            <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{resultingInLabel}</div>
-            <textarea
-              className="min-h-20 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
-              onChange={(event) => onResultingInChange(event.target.value)}
-              value={resultingInValue}
             />
           </div>
           <div className="rounded-2xl bg-slate-50 px-4 py-3">
