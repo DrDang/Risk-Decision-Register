@@ -1,0 +1,97 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-on-primary: #f7f7ff;
+  --color-tertiary-container: #dae2fd;
+  --color-secondary-container: #d5e3fc;
+  --color-error-dim: #4e0309;
+  --color-outline-variant: #a9b4b9;
+  --color-on-secondary-container: #455367;
+  --color-secondary: #526074;
+  --color-on-background: #2a3439;
+  --color-on-tertiary-fixed-variant: #535b71;
+  --color-primary-fixed-dim: #c5d4fa;
+  --color-surface-container-lowest: #ffffff;
+  --color-inverse-surface: #0b0f10;
+  --color-secondary-dim: #465468;
+  --color-on-error: #fff7f6;
+  --color-inverse-primary: #c7d7fd;
+  --color-surface-container-low: #f0f4f7;
+  --color-on-primary-fixed: #303f5d;
+  --color-surface-container-highest: #d9e4ea;
+  --color-surface: #f7f9fb;
+  --color-on-secondary: #f8f8ff;
+  --color-tertiary-fixed: #dae2fd;
+  --color-tertiary-dim: #4b5369;
+  --color-error-container: #fe8983;
+  --color-outline: #717c82;
+  --color-secondary-fixed: #d5e3fc;
+  --color-on-tertiary: #f9f8ff;
+  --color-on-primary-container: #425271;
+  --color-on-error-container: #752121;
+  --color-primary-dim: #435272;
+  --color-secondary-fixed-dim: #c7d5ed;
+  --color-on-tertiary-container: #4a5167;
+  --color-background: #f7f9fb;
+  --color-surface-tint: #4f5e7e;
+  --color-primary-fixed: #d7e2ff;
+  --color-surface-variant: #d9e4ea;
+  --color-tertiary: #575f75;
+  --color-on-surface-variant: #566166;
+  --color-error: #9f403d;
+  --color-on-secondary-fixed: #324053;
+  --color-tertiary-fixed-dim: #ccd4ee;
+  --color-primary: #4f5e7e;
+  --color-primary-container: #d7e2ff;
+  --color-surface-container-high: #e1e9ee;
+  --color-on-tertiary-fixed: #373f54;
+  --color-inverse-on-surface: #9a9d9f;
+  --color-on-surface: #2a3439;
+  --color-surface-container: #e8eff3;
+  --color-surface-dim: #cfdce3;
+  --color-surface-bright: #f7f9fb;
+  --color-on-secondary-fixed-variant: #4e5c71;
+  --color-on-primary-fixed-variant: #4c5c7b;
+
+  --font-headline: "Manrope", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --font-label: "Inter", sans-serif;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+h1, h2, h3, .font-headline {
+  font-family: var(--font-headline);
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+.material-symbols-outlined.filled {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+/* Hide scrollbar for IE, Edge and Firefox */
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}

@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Decision Register | The Governed Surface</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-primary": "#f7f7ff",
+                    "tertiary-container": "#dae2fd",
+                    "secondary-container": "#d5e3fc",
+                    "error-dim": "#4e0309",
+                    "outline-variant": "#a9b4b9",
+                    "on-secondary-container": "#455367",
+                    "secondary": "#526074",
+                    "on-background": "#2a3439",
+                    "on-tertiary-fixed-variant": "#535b71",
+                    "primary-fixed-dim": "#c5d4fa",
+                    "surface-container-lowest": "#ffffff",
+                    "inverse-surface": "#0b0f10",
+                    "secondary-dim": "#465468",
+                    "on-error": "#fff7f6",
+                    "inverse-primary": "#c7d7fd",
+                    "surface-container-low": "#f0f4f7",
+                    "on-primary-fixed": "#303f5d",
+                    "surface-container-highest": "#d9e4ea",
+                    "surface": "#f7f9fb",
+                    "on-secondary": "#f8f8ff",
+                    "tertiary-fixed": "#dae2fd",
+                    "tertiary-dim": "#4b5369",
+                    "error-container": "#fe8983",
+                    "outline": "#717c82",
+                    "secondary-fixed": "#d5e3fc",
+                    "on-tertiary": "#f9f8ff",
+                    "on-primary-container": "#425271",
+                    "on-error-container": "#752121",
+                    "primary-dim": "#435272",
+                    "secondary-fixed-dim": "#c7d5ed",
+                    "on-tertiary-container": "#4a5167",
+                    "background": "#f7f9fb",
+                    "surface-tint": "#4f5e7e",
+                    "primary-fixed": "#d7e2ff",
+                    "surface-variant": "#d9e4ea",
+                    "tertiary": "#575f75",
+                    "on-surface-variant": "#566166",
+                    "error": "#9f403d",
+                    "on-secondary-fixed": "#324053",
+                    "tertiary-fixed-dim": "#ccd4ee",
+                    "primary": "#4f5e7e",
+                    "primary-container": "#d7e2ff",
+                    "surface-container-high": "#e1e9ee",
+                    "on-tertiary-fixed": "#373f54",
+                    "inverse-on-surface": "#9a9d9f",
+                    "on-surface": "#2a3439",
+                    "surface-container": "#e8eff3",
+                    "surface-dim": "#cfdce3",
+                    "surface-bright": "#f7f9fb",
+                    "on-secondary-fixed-variant": "#4e5c71",
+                    "on-primary-fixed-variant": "#4c5c7b"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "fontFamily": {
+                    "headline": ["Manrope"],
+                    "body": ["Inter"],
+                    "label": ["Inter"]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body { font-family: 'Inter', sans-serif; }
+        h1, h2, h3, .editorial { font-family: 'Manrope', sans-serif; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(24px);
+        }
+        .primary-gradient {
+            background: linear-gradient(135deg, #4f5e7e 0%, #435272 100%);
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface">
+<!-- SideNavBar (Sticky and Full Height) -->
+<aside class="fixed left-0 top-0 h-screen w-64 bg-slate-100 dark:bg-slate-900 flex flex-col py-6 px-4 z-50 overflow-y-auto">
+<!-- Project Selector Header -->
+<div class="mb-8 flex items-center gap-3 px-2">
+<div class="w-10 h-10 rounded-lg bg-primary text-white flex items-center justify-center shadow-lg">
+<span class="material-symbols-outlined">shield</span>
+</div>
+<div>
+<h2 class="text-lg font-bold text-slate-800 dark:text-slate-100 leading-tight">Project Alpha</h2>
+<p class="text-xs font-medium text-slate-500">Governance Oversight</p>
+</div>
+</div>
+<!-- Project Selector Dropdown Style -->
+<div class="mb-8 px-2">
+<div class="bg-white/50 dark:bg-slate-800/50 rounded-xl p-3 flex items-center justify-between cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+<div class="flex items-center gap-2">
+<img alt="Project Selector" class="w-6 h-6 rounded" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB1P4uWJRwiAdMAjCgaKurAlmuDzlTM5lV44xljz2cv-8H8HHw9q4CGEwNvSYC3roV_cpewsMkXZbnygl6DHb1VDla5g2nmeDa3MHtpGAScCM4T_lxrjOz2nkT-2Wgpq7Sfdq_OrLTxRTKTYsNdy2DUuoezzMPx_NLTuZfvUa61kvkdUSijVNxxA905ceT1o-KRoTI7Fa-k4uEvvkJtotvxPXzuev-kwE6qSPafuy92xsdSsy1z1aGSwzaoh52lT3TH3-Jq_KpAsg"/>
+<span class="text-sm font-semibold text-slate-700 dark:text-slate-300">Alpha Core</span>
+</div>
+<span class="material-symbols-outlined text-sm">unfold_more</span>
+</div>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">security</span>
+<span class="text-sm">Risk Register</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-900 dark:text-white font-bold border-r-4 border-slate-600 bg-slate-200 dark:bg-slate-800" href="#">
+<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">gavel</span>
+<span class="text-sm">Decision Register</span>
+</a>
+</nav>
+<div class="mt-auto border-t border-slate-200 dark:border-slate-800 pt-4">
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+<span class="text-sm">Settings</span>
+</a>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="ml-64 min-h-screen">
+<!-- TopNavBar -->
+<header class="bg-slate-50 dark:bg-slate-950 flex justify-between items-center h-16 px-8 sticky top-0 z-40">
+<div class="flex items-center gap-4 flex-1">
+<div class="relative w-96 group">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg group-focus-within:text-slate-600 transition-colors">search</span>
+<input class="w-full bg-slate-100 dark:bg-slate-900 border-none rounded-full pl-10 pr-4 py-2 text-sm focus:ring-0 focus:ring-offset-0 focus:border-b-2 focus:border-slate-400 transition-all" placeholder="Search decisions..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<span class="text-xl font-black text-slate-800 dark:text-slate-100 tracking-tight mr-4">The Governed Surface</span>
+<div class="flex items-center gap-3">
+<button class="px-4 py-2 text-sm font-semibold text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                        Export PDF
+                    </button>
+<button class="px-4 py-2 text-sm font-bold text-white primary-gradient rounded-lg shadow-sm hover:opacity-90 transition-opacity">
+                        + Log New Risk
+                    </button>
+<button class="p-2 text-slate-500 hover:text-slate-800 dark:hover:text-slate-100 transition-colors">
+<span class="material-symbols-outlined">help</span>
+</button>
+</div>
+</div>
+</header>
+<!-- Canvas -->
+<div class="p-8">
+<div class="mb-12">
+<h2 class="text-4xl font-extrabold text-on-surface font-headline tracking-tight mb-2">Decision Register</h2>
+<p class="text-on-surface-variant font-body">Project Alpha • Q3 Governance Review</p>
+</div>
+<!-- Bento Layout Content -->
+<div class="grid grid-cols-12 gap-6 items-start">
+<!-- Decisions List -->
+<div class="col-span-8 bg-surface-container-low rounded-xl p-1 overflow-hidden">
+<div class="bg-surface-container-lowest rounded-lg">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="text-on-surface-variant/60 font-label text-[11px] uppercase tracking-[0.1em]">
+<th class="px-6 py-5 font-bold">ID</th>
+<th class="px-6 py-5 font-bold">Decision Title</th>
+<th class="px-6 py-5 font-bold">Authority</th>
+<th class="px-6 py-5 font-bold">Status</th>
+<th class="px-6 py-5 font-bold text-right">Date</th>
+</tr>
+</thead>
+<tbody class="text-sm font-body">
+<tr class="hover:bg-surface-container transition-colors group cursor-pointer">
+<td class="px-6 py-4 font-mono text-xs text-primary font-bold">DEC-204</td>
+<td class="px-6 py-4 font-semibold text-on-surface">Data Sovereignty Migration</td>
+<td class="px-6 py-4 text-on-surface-variant">Steering Committee</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase bg-tertiary-container text-on-tertiary-container">Approved</span>
+</td>
+<td class="px-6 py-4 text-right text-on-surface-variant tabular-nums">Oct 12, 2023</td>
+</tr>
+<tr class="bg-surface-container-low/30 hover:bg-surface-container transition-colors group cursor-pointer">
+<td class="px-6 py-4 font-mono text-xs text-primary font-bold">DEC-203</td>
+<td class="px-6 py-4 font-semibold text-on-surface">Cloud Vendor Consolidation</td>
+<td class="px-6 py-4 text-on-surface-variant">Chief Tech Officer</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase bg-surface-container-highest text-on-surface-variant">Implemented</span>
+</td>
+<td class="px-6 py-4 text-right text-on-surface-variant tabular-nums">Sep 28, 2023</td>
+</tr>
+<tr class="hover:bg-surface-container transition-colors group cursor-pointer bg-primary/5">
+<td class="px-6 py-4 font-mono text-xs text-primary font-bold">DEC-202</td>
+<td class="px-6 py-4 font-semibold text-on-surface">Zero-Trust Protocol V2</td>
+<td class="px-6 py-4 text-on-surface-variant">Security Council</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase bg-primary-container text-on-primary-container">Proposed</span>
+</td>
+<td class="px-6 py-4 text-right text-on-surface-variant tabular-nums">Nov 04, 2023</td>
+</tr>
+<tr class="bg-surface-container-low/30 hover:bg-surface-container transition-colors group cursor-pointer">
+<td class="px-6 py-4 font-mono text-xs text-primary font-bold">DEC-198</td>
+<td class="px-6 py-4 font-semibold text-on-surface line-through decoration-on-surface-variant/30">Legacy API Maintenance</td>
+<td class="px-6 py-4 text-on-surface-variant">Operations Dept</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase bg-error-container text-on-error-container">Reversed</span>
+</td>
+<td class="px-6 py-4 text-right text-on-surface-variant tabular-nums">Aug 15, 2023</td>
+</tr>
+<tr class="hover:bg-surface-container transition-colors group cursor-pointer">
+<td class="px-6 py-4 font-mono text-xs text-primary font-bold">DEC-195</td>
+<td class="px-6 py-4 font-semibold text-on-surface">Regional Auth Strategy</td>
+<td class="px-6 py-4 text-on-surface-variant">Legal Council</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase bg-secondary-container text-on-secondary-container">Superseded</span>
+</td>
+<td class="px-6 py-4 text-right text-on-surface-variant tabular-nums">Jul 30, 2023</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Detail View Panel -->
+<div class="col-span-4 sticky top-24">
+<div class="bg-surface-container-lowest rounded-xl p-8 shadow-[0_12px_40px_rgba(42,52,57,0.08)] border border-outline-variant/10">
+<div class="flex justify-between items-start mb-6">
+<span class="text-xs font-mono font-bold text-primary px-2 py-1 bg-primary-container rounded">DEC-202</span>
+<span class="material-symbols-outlined text-on-surface-variant/40 cursor-pointer hover:text-primary transition-colors">open_in_full</span>
+</div>
+<h3 class="text-2xl font-bold font-headline text-on-surface mb-6 leading-tight">Zero-Trust Protocol V2</h3>
+<div class="space-y-8">
+<!-- Decision Statement -->
+<div>
+<label class="text-[10px] uppercase tracking-widest font-bold text-on-surface-variant/50 block mb-2 font-label">Decision Statement</label>
+<p class="text-sm text-on-surface leading-relaxed">
+                                    Mandate the implementation of per-session verification across all internal microservices by end of Fiscal Year 2024, deprecating long-lived OAuth tokens.
+                                </p>
+</div>
+<!-- Rationale -->
+<div class="p-4 bg-surface-container-low rounded-lg border-l-4 border-primary">
+<label class="text-[10px] uppercase tracking-widest font-bold text-on-surface-variant/50 block mb-2 font-label">Rationale</label>
+<p class="text-sm text-on-secondary-container leading-relaxed italic">
+                                    To mitigate increasing lateral movement risks identified in the Q2 Audit and align with federal compliance standards for high-security cloud environments.
+                                </p>
+</div>
+<!-- Linked Risks -->
+<div>
+<label class="text-[10px] uppercase tracking-widest font-bold text-on-surface-variant/50 block mb-3 font-label">Linked Risks</label>
+<div class="space-y-2">
+<div class="flex items-center justify-between p-3 rounded-lg border border-outline-variant/10 hover:border-outline-variant/40 transition-colors cursor-pointer group">
+<div class="flex items-center gap-3">
+<div class="w-1.5 h-1.5 rounded-full bg-error"></div>
+<span class="text-xs font-medium text-on-surface group-hover:text-primary transition-colors">Unauthorized Lateral Pivot</span>
+</div>
+<span class="material-symbols-outlined text-xs text-on-surface-variant">arrow_forward_ios</span>
+</div>
+<div class="flex items-center justify-between p-3 rounded-lg border border-outline-variant/10 hover:border-outline-variant/40 transition-colors cursor-pointer group">
+<div class="flex items-center gap-3">
+<div class="w-1.5 h-1.5 rounded-full bg-primary-dim"></div>
+<span class="text-xs font-medium text-on-surface group-hover:text-primary transition-colors">Compliance Audit Failure</span>
+</div>
+<span class="material-symbols-outlined text-xs text-on-surface-variant">arrow_forward_ios</span>
+</div>
+</div>
+</div>
+<!-- Meta Data -->
+<div class="pt-6 border-t border-outline-variant/10 flex items-center justify-between">
+<div class="flex flex-col">
+<span class="text-[9px] uppercase tracking-widest font-bold text-on-surface-variant/50">Last Modified</span>
+<span class="text-xs font-medium tabular-nums">Today, 14:32 PM</span>
+</div>
+<button class="primary-gradient text-on-primary px-4 py-2 rounded-lg text-sm font-bold shadow-md hover:opacity-90 transition-opacity">
+                                    Edit Decision
+                                </button>
+</div>
+</div>
+</div>
+<!-- Statistics / Confidence Meter (Visual Flourish) -->
+<div class="mt-6 bg-surface-container rounded-xl p-6">
+<div class="flex justify-between items-center mb-4">
+<span class="text-xs font-bold font-headline text-on-surface-variant">Governance Alignment</span>
+<span class="text-xs font-mono font-bold text-primary">94%</span>
+</div>
+<div class="h-1.5 w-full bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[94%] rounded-full shadow-[0_0_8px_rgba(79,94,126,0.3)]"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Floating Action Button (FAB) - Contextual -->
+<button class="fixed bottom-8 right-8 primary-gradient text-on-primary w-14 h-14 rounded-full flex items-center justify-center shadow-2xl hover:scale-105 transition-transform z-50">
+<span class="material-symbols-outlined" style="font-variation-settings: 'wght' 600;">add</span>
+</button>
+</body></html>

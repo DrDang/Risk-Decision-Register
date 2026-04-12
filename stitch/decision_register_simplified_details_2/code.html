@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Decision Register | The Governed Surface</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Manrope:wght@600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "error-dim": "#4e0309",
+                        "tertiary-dim": "#4b5369",
+                        "tertiary-container": "#dae2fd",
+                        "primary-fixed-dim": "#c5d4fa",
+                        "error-container": "#fe8983",
+                        "surface-tint": "#4f5e7e",
+                        "tertiary-fixed": "#dae2fd",
+                        "on-secondary-container": "#455367",
+                        "on-secondary": "#f8f8ff",
+                        "surface-container-low": "#f0f4f7",
+                        "on-tertiary-fixed-variant": "#535b71",
+                        "on-primary-fixed": "#303f5d",
+                        "tertiary": "#575f75",
+                        "primary": "#4f5e7e",
+                        "surface-container-high": "#e1e9ee",
+                        "outline": "#717c82",
+                        "on-error": "#fff7f6",
+                        "tertiary-fixed-dim": "#ccd4ee",
+                        "outline-variant": "#a9b4b9",
+                        "secondary": "#526074",
+                        "primary-dim": "#435272",
+                        "on-tertiary-fixed": "#373f54",
+                        "on-tertiary": "#f9f8ff",
+                        "surface-container": "#e8eff3",
+                        "secondary-dim": "#465468",
+                        "surface-container-highest": "#d9e4ea",
+                        "background": "#f7f9fb",
+                        "error": "#9f403d",
+                        "secondary-fixed": "#d5e3fc",
+                        "on-error-container": "#752121",
+                        "primary-fixed": "#d7e2ff",
+                        "secondary-fixed-dim": "#c7d5ed",
+                        "surface-variant": "#d9e4ea",
+                        "surface-container-lowest": "#ffffff",
+                        "on-tertiary-container": "#4a5167",
+                        "secondary-container": "#d5e3fc",
+                        "on-surface": "#2a3439",
+                        "inverse-on-surface": "#9a9d9f",
+                        "on-primary-fixed-variant": "#4c5c7b",
+                        "on-secondary-fixed": "#324053",
+                        "primary-container": "#d7e2ff",
+                        "on-surface-variant": "#566166",
+                        "surface-bright": "#f7f9fb",
+                        "on-secondary-fixed-variant": "#4e5c71",
+                        "on-primary-container": "#425271",
+                        "surface-dim": "#cfdce3",
+                        "surface": "#f7f9fb",
+                        "inverse-surface": "#0b0f10",
+                        "on-primary": "#f7f7ff",
+                        "inverse-primary": "#c7d7fd",
+                        "on-background": "#2a3439"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "fontFamily": {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-headline { font-family: 'Manrope', sans-serif; }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .active-nav-border {
+            border-right: 4px solid #4f5e7e;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #d9e4ea;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface flex min-h-screen">
+<!-- SideNavBar (Shared Component) -->
+<aside class="fixed left-0 top-0 h-screen w-64 flex flex-col bg-slate-100 dark:bg-slate-900 border-r-0 z-50">
+<div class="p-6">
+<div class="flex items-center gap-3 mb-8">
+<div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-white text-sm" style="font-variation-settings: 'FILL' 1;">security</span>
+</div>
+<div class="flex flex-col">
+<span class="text-xl font-bold text-slate-800 dark:text-slate-100 tracking-tight font-headline">The Governed Surface</span>
+<span class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Risk &amp; Decision Management</span>
+</div>
+</div>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="dashboard">dashboard</span>
+<span class="text-sm">Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="security">security</span>
+<span class="text-sm">Risk Register</span>
+</a>
+<!-- Active Item: Decision Register -->
+<a class="flex items-center gap-3 px-4 py-3 text-slate-900 dark:text-white font-semibold border-r-4 border-slate-700 dark:border-slate-300 bg-slate-200 dark:bg-slate-800 transition-colors group" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="gavel" style="font-variation-settings: 'FILL' 1;">gavel</span>
+<span class="text-sm">Decision Register</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="shield_with_heart">shield_with_heart</span>
+<span class="text-sm">Mitigation Actions</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors rounded-lg group" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="settings">settings</span>
+<span class="text-sm">Settings</span>
+</a>
+</nav>
+</div>
+<div class="mt-auto p-6">
+<button class="w-full py-3 bg-gradient-to-br from-primary to-primary-dim text-white rounded-xl shadow-lg hover:opacity-90 transition-all font-semibold flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">add</span>
+<span class="text-sm">Create New</span>
+</button>
+<!-- Updated Profile Card to Local Mode Info -->
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="ml-64 flex-1 flex flex-col min-h-screen">
+<!-- TopNavBar -->
+<header class="flex justify-between items-center h-16 px-8 w-full sticky top-0 bg-slate-50 dark:bg-slate-950 z-40">
+<div class="flex items-center gap-6">
+<div class="relative">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline-variant" data-icon="search">search</span>
+<input class="bg-surface-container-low border-none rounded-full py-2 pl-10 pr-4 text-sm w-80 focus:ring-2 focus:ring-primary/20 placeholder:text-outline-variant" placeholder="Search decisions..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="w-10 h-10 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-800 transition-colors">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<button class="w-10 h-10 flex items-center justify-center rounded-full text-slate-500 hover:text-slate-800 transition-colors">
+<span class="material-symbols-outlined" data-icon="help_outline">help_outline</span>
+</button>
+<div class="h-6 w-px bg-surface-container-highest mx-2"></div>
+</div>
+</header>
+<div class="p-8 max-w-7xl w-full mx-auto space-y-8 flex-1">
+<!-- Page Header -->
+<div class="flex justify-between items-end">
+<div>
+<h1 class="font-headline text-4xl font-extrabold text-on-surface tracking-tight">Decision Register</h1>
+<p class="text-on-surface-variant mt-2 font-medium">Historical log of governance outcomes and strategic pivots.</p>
+</div>
+</div>
+<!-- Action Bar / Filters -->
+<div class="bg-surface-container-lowest p-2 rounded-2xl flex items-center gap-4 border border-outline-variant/10 shadow-sm">
+<div class="flex items-center gap-2 px-4 border-r border-outline-variant/20">
+<span class="material-symbols-outlined text-outline" data-icon="filter_list">filter_list</span>
+<span class="text-xs font-bold text-on-surface-variant uppercase tracking-tighter">Filters</span>
+</div>
+<div class="flex items-center gap-3">
+<select class="bg-transparent border-none text-sm font-semibold text-on-surface focus:ring-0 cursor-pointer">
+<option>Authority: All</option>
+<option>Executive Board</option>
+<option>Risk Committee</option>
+<option>Tech Council</option>
+</select>
+<select class="bg-transparent border-none text-sm font-semibold text-on-surface focus:ring-0 cursor-pointer">
+<option>Status: All</option>
+<option>Proposed</option>
+<option>Approved</option>
+<option>Implemented</option>
+</select>
+<div class="relative flex items-center">
+<span class="material-symbols-outlined text-xs absolute left-2 text-outline-variant" data-icon="calendar_today">calendar_today</span>
+<input class="bg-surface-container-low border-none rounded-lg py-1.5 pl-8 pr-3 text-xs font-bold text-on-surface w-36" readonly="" type="text" value="Last 90 Days"/>
+</div>
+</div>
+<div class="ml-auto flex items-center gap-2 px-4">
+<button class="p-2 hover:bg-surface-container rounded-lg text-outline transition-colors">
+<span class="material-symbols-outlined" data-icon="download">download</span>
+</button>
+<button class="p-2 hover:bg-surface-container rounded-lg text-outline transition-colors">
+<span class="material-symbols-outlined" data-icon="print">print</span>
+</button>
+</div>
+</div>
+<!-- Decision Log Table -->
+<div class="bg-surface-container-lowest rounded-3xl overflow-hidden shadow-sm border border-outline-variant/10">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-low/50">
+<th class="px-6 py-5 text-[10px] font-bold text-outline-variant uppercase tracking-widest">ID</th>
+<th class="px-6 py-5 text-[10px] font-bold text-outline-variant uppercase tracking-widest">Decision Title</th>
+<th class="px-6 py-5 text-[10px] font-bold text-outline-variant uppercase tracking-widest">Status</th>
+<th class="px-6 py-5 text-[10px] font-bold text-outline-variant uppercase tracking-widest">Authority</th>
+<th class="px-6 py-5 text-[10px] font-bold text-outline-variant uppercase tracking-widest text-center">Date</th>
+<th class="px-6 py-5 text-[10px] font-bold text-outline-variant uppercase tracking-widest text-right">Linked Risks</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-surface-container">
+<!-- Row 1 (Active/Selected) -->
+<tr class="bg-surface-container-low/30 hover:bg-surface-container transition-colors cursor-pointer group">
+<td class="px-6 py-5 text-sm font-mono text-outline">DEC-829</td>
+<td class="px-6 py-5">
+<div class="flex flex-col">
+<span class="text-sm font-bold text-on-surface">Data Center Migration Phase II</span>
+<span class="text-xs text-on-surface-variant opacity-70">Infrastructure upgrade and consolidation</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<span class="px-3 py-1 bg-secondary-container text-on-secondary-container rounded-full text-[10px] font-bold uppercase">Implemented</span>
+</td>
+<td class="px-6 py-5 text-sm font-semibold text-on-surface-variant">Executive Board</td>
+<td class="px-6 py-5 text-sm font-medium text-center text-on-surface">Oct 12, 2023</td>
+<td class="px-6 py-5 text-right">
+<div class="flex justify-end gap-2 items-center group/risks">
+<span class="material-symbols-outlined text-sm text-error" style="font-variation-settings: 'FILL' 1;">warning</span>
+<span class="material-symbols-outlined text-sm text-primary" style="font-variation-settings: 'FILL' 1;">dns</span>
+<span class="material-symbols-outlined text-xs text-outline-variant opacity-0 group-hover:opacity-100 transition-opacity">open_in_new</span>
+</div>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-surface-container transition-colors cursor-pointer group">
+<td class="px-6 py-5 text-sm font-mono text-outline">DEC-834</td>
+<td class="px-6 py-5">
+<div class="flex flex-col">
+<span class="text-sm font-bold text-on-surface">AI Model Governance Framework</span>
+<span class="text-xs text-on-surface-variant opacity-70">Establishing ethical guardrails for LLM use</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<span class="px-3 py-1 bg-primary-container text-on-primary-container rounded-full text-[10px] font-bold uppercase">Approved</span>
+</td>
+<td class="px-6 py-5 text-sm font-semibold text-on-surface-variant">Risk Committee</td>
+<td class="px-6 py-5 text-sm font-medium text-center text-on-surface">Nov 05, 2023</td>
+<td class="px-6 py-5 text-right">
+<div class="flex justify-end gap-2 items-center group/risks">
+<span class="material-symbols-outlined text-sm text-primary" style="font-variation-settings: 'FILL' 1;">verified_user</span>
+<span class="material-symbols-outlined text-xs text-outline-variant opacity-0 group-hover:opacity-100 transition-opacity">open_in_new</span>
+</div>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-surface-container transition-colors cursor-pointer group">
+<td class="px-6 py-5 text-sm font-mono text-outline">DEC-841</td>
+<td class="px-6 py-5">
+<div class="flex flex-col">
+<span class="text-sm font-bold text-on-surface">Cloud Vendor Tiering Adjustment</span>
+<span class="text-xs text-on-surface-variant opacity-70">Re-evaluating SLAs for tertiary providers</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<span class="px-3 py-1 bg-surface-container-highest text-on-surface-variant rounded-full text-[10px] font-bold uppercase">Proposed</span>
+</td>
+<td class="px-6 py-5 text-sm font-semibold text-on-surface-variant">Tech Council</td>
+<td class="px-6 py-5 text-sm font-medium text-center text-on-surface">Nov 18, 2023</td>
+<td class="px-6 py-5 text-right">
+<div class="flex justify-end gap-2 items-center group/risks">
+<span class="material-symbols-outlined text-sm text-outline-variant" style="font-variation-settings: 'FILL' 1;">cloud</span>
+<span class="material-symbols-outlined text-sm text-outline-variant" style="font-variation-settings: 'FILL' 1;">payments</span>
+<span class="material-symbols-outlined text-xs text-outline-variant opacity-0 group-hover:opacity-100 transition-opacity">open_in_new</span>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Decision Detail Pane -->
+<div class="grid grid-cols-12 gap-8 items-start">
+<div class="col-span-12 space-y-6">
+<div class="bg-surface-container-lowest p-8 rounded-3xl border border-outline-variant/10 shadow-sm">
+<div class="flex justify-between items-start mb-8">
+<div>
+<div class="flex items-center gap-3 mb-2">
+<span class="text-xs font-mono text-outline bg-surface-container px-2 py-1 rounded">DEC-829</span>
+<span class="px-3 py-1 bg-secondary-container text-on-secondary-container rounded-full text-[10px] font-bold uppercase">Implemented</span>
+</div>
+<h2 class="font-headline text-2xl font-bold text-on-surface">Data Center Migration Phase II</h2>
+</div>
+<div class="flex gap-2">
+<button class="px-4 py-2 border border-outline-variant/20 rounded-xl text-xs font-bold hover:bg-surface-container transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">edit</span> Edit Decision
+                            </button>
+<button class="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:opacity-90 transition-all flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">history</span> Full History
+                            </button>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
+<div>
+<span class="text-[10px] font-bold text-outline-variant uppercase tracking-widest block mb-2">Owner / Authority</span>
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-sm">account_balance</span>
+</div>
+<div>
+<p class="text-sm font-bold text-on-surface">Executive Board</p>
+<p class="text-[10px] text-on-surface-variant">Strategic Oversight</p>
+</div>
+</div>
+</div>
+<div>
+<span class="text-[10px] font-bold text-outline-variant uppercase tracking-widest block mb-2">Effective Date</span>
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-sm">event_available</span>
+</div>
+<p class="text-sm font-bold text-on-surface">October 12, 2023</p>
+</div>
+</div>
+<div>
+<span class="text-[10px] font-bold text-outline-variant uppercase tracking-widest block mb-2">Related Program</span>
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-sm">hub</span>
+</div>
+<p class="text-sm font-bold text-on-surface">Cloud Transformation 2024</p>
+</div>
+</div>
+</div>
+<div class="border-t border-outline-variant/10 pt-8">
+<div class="flex items-center gap-2 mb-4">
+<span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">link</span>
+<h3 class="font-headline font-bold text-lg">Linked Risks</h3>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<!-- Risk Item 1 -->
+<div class="p-4 rounded-2xl border border-outline-variant/10 bg-surface-container-low/30 hover:border-primary/20 transition-all cursor-pointer">
+<div class="flex justify-between items-start mb-3">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-error"></span>
+<span class="text-xs font-bold text-on-surface">Infrastructure Stability</span>
+</div>
+<span class="text-[10px] font-bold text-error uppercase">Severe Impact</span>
+</div>
+<p class="text-xs text-on-surface-variant line-clamp-2 mb-3">Potential service disruption during live environment cutover. High probability of packet loss during peak hours.</p>
+<div class="flex justify-between items-center">
+<span class="text-[10px] font-medium text-outline-variant">ID: RISK-442</span>
+<button class="text-[10px] font-bold text-primary flex items-center gap-1 hover:underline">
+                                        View Details <span class="material-symbols-outlined text-[10px]">arrow_forward</span>
+</button>
+</div>
+</div>
+<!-- Risk Item 2 -->
+<div class="p-4 rounded-2xl border border-outline-variant/10 bg-surface-container-low/30 hover:border-primary/20 transition-all cursor-pointer">
+<div class="flex justify-between items-start mb-3">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<span class="text-xs font-bold text-on-surface">Data Sovereignty Compliance</span>
+</div>
+<span class="text-[10px] font-bold text-primary-dim uppercase">Medium Impact</span>
+</div>
+<p class="text-xs text-on-surface-variant line-clamp-2 mb-3">Ensuring regional data residency requirements are maintained during the migration to multi-cloud regions.</p>
+<div class="flex justify-between items-center">
+<span class="text-[10px] font-medium text-outline-variant">ID: RISK-512</span>
+<button class="text-[10px] font-bold text-primary flex items-center gap-1 hover:underline">
+                                        View Details <span class="material-symbols-outlined text-[10px]">arrow_forward</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Sticky Footer Meta -->
+<footer class="mt-auto px-8 py-4 border-t border-outline-variant/10 flex justify-between items-center text-[10px] font-bold text-outline-variant uppercase tracking-widest">
+<div class="flex gap-6">
+<span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-green-500"></span> Last Synchronized: 2 minutes ago</span>
+<span>Audit Log: Verified</span>
+</div>
+<div class="flex gap-4">
+<a class="hover:text-primary transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-primary transition-colors" href="#">Compliance Shield</a>
+</div>
+</footer>
+</main>
+</body></html>

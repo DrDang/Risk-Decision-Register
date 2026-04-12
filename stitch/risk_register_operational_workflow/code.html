@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Project Alpha - Operational Risk Register</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-tertiary-fixed-variant": "#535b71",
+                        "on-tertiary-fixed": "#373f54",
+                        "on-tertiary-container": "#4a5167",
+                        "on-primary-container": "#425271",
+                        "inverse-surface": "#0b0f10",
+                        "on-secondary": "#f8f8ff",
+                        "primary-fixed": "#d7e2ff",
+                        "primary-dim": "#435272",
+                        "on-primary": "#f7f7ff",
+                        "on-secondary-fixed-variant": "#4e5c71",
+                        "background": "#f7f9fb",
+                        "secondary": "#526074",
+                        "surface-container-low": "#f0f4f7",
+                        "on-background": "#2a3439",
+                        "tertiary": "#575f75",
+                        "on-primary-fixed-variant": "#4c5c7b",
+                        "tertiary-fixed": "#dae2fd",
+                        "outline-variant": "#a9b4b9",
+                        "error-dim": "#4e0309",
+                        "tertiary-fixed-dim": "#ccd4ee",
+                        "on-primary-fixed": "#303f5d",
+                        "on-tertiary": "#f9f8ff",
+                        "primary-fixed-dim": "#c5d4fa",
+                        "on-error-container": "#752121",
+                        "surface-variant": "#d9e4ea",
+                        "on-secondary-fixed": "#324053",
+                        "surface-container-highest": "#d9e4ea",
+                        "primary-container": "#d7e2ff",
+                        "tertiary-dim": "#4b5369",
+                        "on-surface-variant": "#566166",
+                        "secondary-container": "#d5e3fc",
+                        "on-secondary-container": "#455367",
+                        "surface": "#f7f9fb",
+                        "error-container": "#fe8983",
+                        "on-surface": "#2a3439",
+                        "outline": "#717c82",
+                        "inverse-on-surface": "#9a9d9f",
+                        "surface-container-lowest": "#ffffff",
+                        "error": "#9f403d",
+                        "on-error": "#fff7f6",
+                        "secondary-fixed": "#d5e3fc",
+                        "inverse-primary": "#c7d7fd",
+                        "secondary-dim": "#465468",
+                        "secondary-fixed-dim": "#c7d5ed",
+                        "primary": "#4f5e7e",
+                        "surface-tint": "#4f5e7e",
+                        "tertiary-container": "#dae2fd",
+                        "surface-bright": "#f7f9fb",
+                        "surface-container": "#e8eff3",
+                        "surface-dim": "#cfdce3",
+                        "surface-container-high": "#e1e9ee"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "fontFamily": {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        body { font-family: 'Inter', sans-serif; }
+        h1, h2, h3, .font-headline { font-family: 'Manrope', sans-serif; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="bg-surface text-on-surface flex min-h-screen overflow-hidden">
+<!-- SideNavBar (Shared Component) -->
+<aside class="fixed left-0 top-0 h-full flex flex-col p-6 bg-slate-50 dark:bg-slate-900 h-screen w-64 border-r-0 z-50">
+<div class="flex items-center gap-3 mb-10">
+<div class="w-8 h-8 rounded bg-primary flex items-center justify-center text-white font-bold">A</div>
+<div>
+<h1 class="text-lg font-bold text-[#1B2B48] dark:text-white tracking-tight">Project Alpha</h1>
+<p class="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Enterprise Governance</p>
+</div>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-3 text-[#1B2B48] dark:text-white font-semibold bg-slate-200 dark:bg-slate-800 rounded-lg p-2 transition-transform duration-150 active:opacity-90 active:scale-95" href="#">
+<span class="material-symbols-outlined text-xl">security</span>
+<span class="text-sm font-medium">Risk Register</span>
+</a>
+<a class="flex items-center gap-3 text-slate-500 dark:text-slate-400 p-2 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-colors" href="#">
+<span class="material-symbols-outlined text-xl">gavel</span>
+<span class="text-sm font-medium">Decision Register</span>
+</a>
+<a class="flex items-center gap-3 text-slate-500 dark:text-slate-400 p-2 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-colors" href="#">
+<span class="material-symbols-outlined text-xl">shield_with_heart</span>
+<span class="text-sm font-medium">Mitigation Actions</span>
+</a>
+</nav>
+<div class="pt-6 border-t border-slate-200 dark:border-slate-800 mt-auto">
+<a class="flex items-center gap-3 text-slate-500 dark:text-slate-400 p-2 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 transition-colors" href="#">
+<span class="material-symbols-outlined text-xl">settings</span>
+<span class="text-sm font-medium">Settings</span>
+</a>
+</div>
+</aside>
+<!-- Content Shell -->
+<div class="flex-1 ml-64 flex flex-col min-h-screen">
+<!-- TopAppBar (Shared Component) -->
+<header class="flex justify-between items-center px-8 h-16 w-full bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl sticky top-0 z-40" style="box-shadow: 0 12px 40px rgba(42, 52, 57, 0.08);">
+<div class="flex items-center gap-4 flex-1">
+<div class="relative w-full max-w-md">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">search</span>
+<input class="w-full bg-surface-container-low border-none rounded-lg py-2 pl-10 pr-4 text-sm focus:ring-2 focus:ring-primary/20 placeholder:text-slate-400" placeholder="Search risks, owners, or IDs..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<button class="text-slate-500 hover:text-primary transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<div class="flex items-center gap-3 pl-6 border-l border-slate-200">
+<div class="text-right">
+<p class="text-xs font-bold text-on-surface">Marcus Thorne</p>
+<p class="text-[10px] text-slate-500">Risk Manager</p>
+</div>
+<img alt="User Profile" class="w-8 h-8 rounded-full bg-slate-200" data-alt="professional headshot of a middle aged man with glasses and short hair in a minimalist style" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBSaBQ8WHLLaPYT_8-KFCynYRxWTTVPHQewht6gE2pNM42pW64i5UJn_dmRnbdOmD5Ip3FfOmCmXmKQiU658ipi0WR3sJ4Pn4cA85k5kBNoHjwtYvNMFEzL2N5WwBk8_J1x-BYfbVFPiL7KlMaZbHjJRWCM0zQ1hh3QC5HHJJSyP5JJkrR7w9QpwlJsyEulAfHahFi6LUkJjfLknb_d6NWeGDAkXflDSWZ8kZ8kBe9nkUxqKqj8xrIVnUH7KmmRvilYYiZOh_gpGw"/>
+</div>
+</div>
+</header>
+<!-- Main Content Area -->
+<main class="flex-1 p-8 space-y-8 overflow-y-auto no-scrollbar pb-24">
+<!-- Top Section (Operational Headers) -->
+<section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+<!-- Left Card: Active Risks -->
+<div class="lg:col-span-1 bg-surface-container-lowest p-6 rounded-xl flex flex-col justify-between">
+<div>
+<h2 class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Active Risks</h2>
+<div class="flex items-baseline gap-2">
+<span class="text-5xl font-extrabold font-headline text-on-surface">18</span>
+<span class="text-sm text-error font-semibold flex items-center">
+<span class="material-symbols-outlined text-sm">trending_up</span> 12%
+                            </span>
+</div>
+</div>
+<div class="mt-8">
+<div class="flex justify-between text-[10px] font-bold uppercase mb-2">
+<span class="text-error">High (5)</span>
+<span class="text-amber-500">Medium (9)</span>
+<span class="text-emerald-500">Low (4)</span>
+</div>
+<div class="h-3 w-full flex rounded-full overflow-hidden">
+<div class="h-full bg-error" style="width: 28%"></div>
+<div class="h-full bg-amber-400" style="width: 50%"></div>
+<div class="h-full bg-emerald-400" style="width: 22%"></div>
+</div>
+</div>
+</div>
+<!-- Right Card: Risk Distribution Heatmap -->
+<div class="lg:col-span-2 bg-surface-container-lowest p-6 rounded-xl">
+<h2 class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-6">Risk Distribution Heatmap</h2>
+<div class="flex gap-4">
+<div class="flex flex-col justify-between py-6 text-[10px] font-bold text-slate-400 uppercase [writing-mode:vertical-lr] rotate-180">
+                            Likelihood (1-5)
+                        </div>
+<div class="flex-1">
+<div class="grid grid-cols-5 gap-1 mb-2 h-48">
+<!-- Row 5 -->
+<div class="bg-amber-100 flex items-center justify-center text-xs font-bold text-amber-700">1</div>
+<div class="bg-amber-200 flex items-center justify-center text-xs font-bold text-amber-800">2</div>
+<div class="bg-error-container/40 flex items-center justify-center text-xs font-bold text-on-error-container">2</div>
+<div class="bg-error-container/70 flex items-center justify-center text-xs font-bold text-on-error-container">1</div>
+<div class="bg-error flex items-center justify-center text-xs font-bold text-white">3</div>
+<!-- Row 4 -->
+<div class="bg-emerald-100/50 flex items-center justify-center text-xs font-bold text-emerald-700">0</div>
+<div class="bg-amber-100 flex items-center justify-center text-xs font-bold text-amber-700">2</div>
+<div class="bg-amber-200 flex items-center justify-center text-xs font-bold text-amber-800">1</div>
+<div class="bg-error-container/40 flex items-center justify-center text-xs font-bold text-on-error-container">4</div>
+<div class="bg-error-container/70 flex items-center justify-center text-xs font-bold text-on-error-container">1</div>
+<!-- Row 3 -->
+<div class="bg-emerald-100/50 flex items-center justify-center text-xs font-bold text-emerald-700">0</div>
+<div class="bg-emerald-100/50 flex items-center justify-center text-xs font-bold text-emerald-700">0</div>
+<div class="bg-amber-100 flex items-center justify-center text-xs font-bold text-amber-700">1</div>
+<div class="bg-amber-200 flex items-center justify-center text-xs font-bold text-amber-800">0</div>
+<div class="bg-error-container/40 flex items-center justify-center text-xs font-bold text-on-error-container">0</div>
+<!-- Row 2 -->
+<div class="bg-emerald-100/50 flex items-center justify-center text-xs font-bold text-emerald-700">0</div>
+<div class="bg-emerald-100/50 flex items-center justify-center text-xs font-bold text-emerald-700">0</div>
+<div class="bg-emerald-100/50 flex items-center justify-center text-xs font-bold text-emerald-700">0</div>
+<div class="bg-amber-100 flex items-center justify-center text-xs font-bold text-amber-700">0</div>
+<div class="bg-amber-200 flex items-center justify-center text-xs font-bold text-amber-800">0</div>
+<!-- Row 1 -->
+<div class="bg-emerald-100/50 flex items-center justify-center text-xs font-bold text-emerald-700">0</div>
+<div class="bg-emerald-100/50 flex items-center justify-center text-xs font-bold text-emerald-700">0</div>
+<div class="bg-emerald-100/50 flex items-center justify-center text-xs font-bold text-emerald-700">0</div>
+<div class="bg-emerald-100/50 flex items-center justify-center text-xs font-bold text-emerald-700">0</div>
+<div class="bg-amber-100 flex items-center justify-center text-xs font-bold text-amber-700">0</div>
+</div>
+<div class="grid grid-cols-5 gap-1 text-[10px] font-bold text-slate-400 uppercase text-center">
+<span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
+</div>
+<div class="text-center mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                Impact (1-5)
+                            </div>
+</div>
+</div>
+</div>
+</section>
+<!-- Main Section (Working Table) -->
+<section class="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm">
+<div class="px-8 py-6 flex items-center justify-between border-b border-surface-container">
+<h2 class="text-xl font-bold font-headline text-on-surface">Risk Register</h2>
+<button class="bg-primary text-on-primary px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 hover:opacity-90 transition-all shadow-lg shadow-primary/20">
+<span class="material-symbols-outlined text-sm">add</span>
+                        Log New Risk
+                    </button>
+</div>
+<div class="overflow-x-auto">
+<div class="absolute left-0 top-0 w-1 h-full bg-primary"></div><table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-low text-[10px] font-bold uppercase tracking-wider text-slate-500">
+<th class="px-8 py-4">ID</th>
+<th class="px-6 py-4">Risk Title</th>
+<th class="px-6 py-4">Status</th>
+<th class="px-6 py-4">LH/IM</th>
+<th class="px-6 py-4">Severity</th>
+<th class="px-6 py-4">Owner</th>
+<th class="px-8 py-4">Last Updated</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-surface-container-low">
+<!-- Row 1 -->
+<tr class="hover:bg-surface-container/30 transition-colors cursor-pointer group">
+<td class="px-8 py-5 text-sm font-bold text-primary">RSK-0021</td>
+<td class="px-6 py-5 text-sm font-medium">Database Replication Lag</td>
+<td class="px-6 py-5">
+<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 uppercase">Monitoring</span>
+</td>
+<td class="px-6 py-5 text-sm font-mono">3/4</td>
+<td class="px-6 py-5">
+<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 uppercase">Medium</span>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<img class="w-6 h-6 rounded-full" data-alt="avatar of a young professional with dark hair" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCG0rWNnvSXIIDRxh6F9x-k9FK9XhQOzBqsBTVn2zsF5TwmkPrcsyk_G53XbK7d0irPfbEjVVEj90zof1WRbykGK71dn87boSQTsD-FY9QkcCxirfpwXocTtWaroUAH1EuVW-GxfYp-ozpdDHUJLfH4NhVk5Ry4Ov6K9SCNfc99t07_xnn9VJ6q0f1HYRiRbYQ0iOAAI1EXXTv-nvws3ErUq-cmAVDU4s_GPll6y_5z04Lq8Y8oIT2v6Xe3KI8eeguV3iV6laXvXQ"/>
+<span class="text-sm">A. Chen</span>
+</div>
+</td>
+<td class="px-8 py-5 text-xs text-slate-400">12h ago</td>
+</tr>
+<!-- Row 2: SELECTED -->
+<tr class="bg-primary-container/20 hover:bg-primary-container/30 transition-colors cursor-pointer relative">
+<td class="px-8 py-5 text-sm font-bold text-primary">RSK-0024</td>
+<td class="px-6 py-5 text-sm font-bold text-on-surface">Cloud Latency Spike</td>
+<td class="px-6 py-5">
+<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 uppercase">Active</span>
+</td>
+<td class="px-6 py-5 text-sm font-mono font-bold">4/5</td>
+<td class="px-6 py-5">
+<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-error-container text-on-error-container uppercase">High</span>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<img class="w-6 h-6 rounded-full" data-alt="avatar of a professional woman with blonde hair" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAqU4akhr4fOhHHTzAwCoU0dC3dj4wuNWIHPoBkz0ZgBScwQNDyxcfP0B9Y8hyHIkS4RWEZfiLQGZYc4POXrzf7WB6IaVK88gGjdt-DfZNj-DfLPhkWNdL5R4KtbiLWSN28mt_sK-2T6h8pmaCeKedovDPux3Q_uB38Am00cB4HgzkuWXWAxdPKW03VDdDMoVcKgxJd_xdrznSjSeVJ79l8VRDZiYmc9M70_bn9XG7iQRJ-oYCQboSp3jtTZTtNsYVzhTh6S-Bmow"/>
+<span class="text-sm font-medium">S. Jenkins</span>
+</div>
+</td>
+<td class="px-8 py-5 text-xs text-primary font-bold">2h ago</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-surface-container/30 transition-colors cursor-pointer">
+<td class="px-8 py-5 text-sm font-bold text-primary">RSK-0019</td>
+<td class="px-6 py-5 text-sm font-medium">Vendor API Deprecation</td>
+<td class="px-6 py-5">
+<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500 uppercase">Pending</span>
+</td>
+<td class="px-6 py-5 text-sm font-mono">2/3</td>
+<td class="px-6 py-5">
+<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 uppercase">Low</span>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<img class="w-6 h-6 rounded-full" data-alt="avatar of a man with beard" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDb-4iIAgke25whcuHy1lixxG1rdshZEe7l6qxmCLPSDgTVA4QAdMhEwz6FWRNNpvFLBqHZD7oeSsirpfrJnZJ7cKSlqzrmNy2GXRXWMDTenuqfAcmqWWLE9mBTMJV-zC7BhLAJx1OW16ayy3O6ybjPVUKv9YoSHwaQ0dtAUsQnMnNEy7FY8K4WMgWm32BGQXbSpk8fNeuQn4VmAupncLrXLTqK51gFPmnPNbZFLCHOu0EOpPAQHUrCN7jpUZvxFIdYzhxZYycNQQ"/>
+<span class="text-sm">J. Wilson</span>
+</div>
+</td>
+<td class="px-8 py-5 text-xs text-slate-400">1d ago</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-surface-container/30 transition-colors cursor-pointer">
+<td class="px-8 py-5 text-sm font-bold text-primary">RSK-0012</td>
+<td class="px-6 py-5 text-sm font-medium">Legacy Auth Vulnerability</td>
+<td class="px-6 py-5">
+<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-600 uppercase">Closed</span>
+</td>
+<td class="px-6 py-5 text-sm font-mono">5/5</td>
+<td class="px-6 py-5">
+<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-error-container text-on-error-container uppercase">High</span>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<img class="w-6 h-6 rounded-full" data-alt="avatar of a woman with dark curly hair" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCT4kfyJFXftfA87O1v_UFLfbXWJdnRfKD-SwEjU1VSIdc76IiiaznGEpZlnYzOtfM9sBJoluyFkpC6XlcPdC4nyFRwmWZXaA1C3RbcfzZOyChGIzTPKdFoL-FyHsgWrSqNAk11nmT_6GOLtsUIva8aKweJw8_keBo1V6WowZa5PCWzgpM2hOccXXA78Al2SF38mjoc4kAHc_sI7BzV9zWnHUcQMQk9h72s1USf6TaXuV0s0AlyWXtOmGkgbnG81mzj6iieAFfMKQ"/>
+<span class="text-sm">L. Moore</span>
+</div>
+</td>
+<td class="px-8 py-5 text-xs text-slate-400">3d ago</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</main>
+<!-- Right-side Slide-out Drawer (Interaction Layer) -->
+<div class="fixed inset-y-0 right-0 w-[480px] bg-white shadow-2xl z-50 transform transition-transform duration-300 flex flex-col border-l border-surface-container">
+<!-- Section 1 (Header) -->
+<div class="p-8 border-b border-surface-container bg-surface-container-low/50">
+<div class="flex justify-between items-start mb-4">
+<div>
+<span class="text-xs font-bold text-primary uppercase tracking-widest">RSK-0024</span>
+<h3 class="text-2xl font-bold font-headline text-on-surface mt-1">Cloud Latency Spike</h3>
+</div>
+<button class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<div class="flex flex-wrap gap-3 mb-6">
+<span class="px-3 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 uppercase">Active</span>
+<span class="px-3 py-1 rounded-full text-[10px] font-bold bg-error-container text-on-error-container uppercase">High Severity</span>
+<span class="px-3 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 uppercase flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]">schedule</span> 2h ago
+                    </span>
+</div>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<img class="w-10 h-10 rounded-full border-2 border-white" data-alt="close up avatar of sarah jenkins" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBJ-jzPk820tG377AYvDZ4xAS76v9d1kaoVf0-Kc1yyYMs5J7-dIlafYOaUgZIctynjrIHijM2U28Nu3mJ5bJc05IjrHTGdfDwsLS5WvgUzBZdTMDAJlWmF2yiZbK8nqFxhI6VsIE3OUvq6Vl8QnNRQM1KUGMzA68Nb_ZxgkMGQu_5vEL9ueUi-GZMknvIzCzdm1BqgaPp7YtDM5b50Bz2nT6ShsYy_XvkLb5gQ1kSTU3NCXD4lF52_5PnK33ILbnqOhaVMmkyq6g"/>
+<div>
+<p class="text-xs text-slate-500 font-medium">Risk Owner</p>
+<p class="text-sm font-bold text-on-surface">Sarah Jenkins</p>
+</div>
+</div>
+<div class="flex gap-2">
+<button class="p-2 rounded-lg bg-white border border-surface-container text-slate-600 hover:text-primary transition-colors shadow-sm">
+<span class="material-symbols-outlined text-xl">edit</span>
+</button>
+<button class="p-2 rounded-lg bg-white border border-surface-container text-slate-600 hover:text-primary transition-colors shadow-sm">
+<span class="material-symbols-outlined text-xl">content_copy</span>
+</button>
+<button class="bg-primary-container text-on-primary-container px-4 py-2 rounded-lg text-xs font-bold hover:opacity-90 transition-all">
+                            Open Full Record
+                        </button>
+</div>
+</div>
+</div>
+<!-- Content Area - Scrollable -->
+<div class="flex-1 overflow-y-auto p-8 space-y-8 no-scrollbar">
+<!-- Section 2 (Assessment) -->
+<div>
+<h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span> Assessment Detail
+                    </h4>
+<div class="grid grid-cols-2 gap-6 bg-surface-container-low/30 p-4 rounded-xl">
+<div>
+<p class="text-[10px] text-slate-500 font-bold uppercase">Likelihood</p>
+<p class="text-lg font-bold text-on-surface">4 <span class="text-xs font-normal text-slate-400">/ 5</span></p>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 font-bold uppercase">Impact</p>
+<p class="text-lg font-bold text-on-surface">5 <span class="text-xs font-normal text-slate-400">/ 5</span></p>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 font-bold uppercase">Category</p>
+<p class="text-sm font-semibold text-on-surface">Infrastructure</p>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 font-bold uppercase">Residual Rating</p>
+<p class="text-sm font-bold text-error">High</p>
+</div>
+</div>
+<div class="mt-4 space-y-3">
+<div>
+<p class="text-[10px] text-slate-500 font-bold uppercase mb-1">Trigger/Cause</p>
+<p class="text-sm text-slate-700 leading-relaxed">Primary provider maintenance in US-East-1 region causing packet drops.</p>
+</div>
+<div>
+<p class="text-[10px] text-slate-500 font-bold uppercase mb-1">Consequence</p>
+<p class="text-sm text-slate-700 leading-relaxed">SLA breach on customer portal; 15% increase in support tickets.</p>
+</div>
+</div>
+</div>
+<!-- Section 3 (Response) -->
+<div>
+<h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span> Mitigation Strategy
+                    </h4>
+<div class="space-y-4">
+<div class="p-4 rounded-xl border border-emerald-100 bg-emerald-50/30">
+<p class="text-[10px] text-emerald-700 font-bold uppercase mb-1">Current Mitigation</p>
+<p class="text-sm font-medium text-slate-800">Scale to multi-region infrastructure using AWS Route 53 latency routing.</p>
+</div>
+<div class="p-4 rounded-xl border border-amber-100 bg-amber-50/30">
+<p class="text-[10px] text-amber-700 font-bold uppercase mb-1">Contingency Plan</p>
+<p class="text-sm font-medium text-slate-800">Immediate redirection to static failover site if latency exceeds 800ms.</p>
+</div>
+<div class="bg-surface-container-lowest border border-surface-container rounded-xl overflow-hidden shadow-sm">
+<div class="px-4 py-2 bg-surface-container-low text-[10px] font-bold uppercase text-slate-500">Pending Action Items</div>
+<div class="p-4 space-y-3">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-5 h-5 rounded border border-slate-300 flex items-center justify-center"></div>
+<span class="text-sm text-slate-700">Config DNS records</span>
+</div>
+<span class="text-[10px] font-bold text-slate-400">Oct 24</span>
+</div>
+<div class="flex items-center justify-between border-t border-slate-100 pt-3">
+<span class="text-[10px] text-slate-500 font-bold uppercase">Next Review</span>
+<span class="text-sm font-bold text-primary">Oct 30, 2023</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Section 4 (Context) -->
+<div class="grid grid-cols-2 gap-4">
+<div class="p-4 rounded-xl bg-surface-container-low/30">
+<p class="text-[10px] text-slate-500 font-bold uppercase mb-2">Linked Decision</p>
+<a class="text-xs font-bold text-primary hover:underline flex items-center gap-1" href="#">
+<span class="material-symbols-outlined text-sm">link</span> DEC-112
+                        </a>
+</div>
+<div class="p-4 rounded-xl bg-surface-container-low/30">
+<p class="text-[10px] text-slate-500 font-bold uppercase mb-2">Project Scope</p>
+<p class="text-xs font-bold text-on-surface">Alpha Core</p>
+</div>
+<div class="flex items-center justify-center p-3 rounded-lg border border-dashed border-slate-300 hover:border-primary transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-primary mr-2">attachment</span>
+<span class="text-xs font-bold text-slate-500 group-hover:text-primary">1 Attachment</span>
+</div>
+<div class="flex items-center justify-center p-3 rounded-lg border border-dashed border-slate-300 hover:border-primary transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-primary mr-2">chat_bubble</span>
+<span class="text-xs font-bold text-slate-500 group-hover:text-primary">2 Comments</span>
+</div>
+</div>
+<!-- Section 5 (History) -->
+<div class="pb-8">
+<h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Audit History</h4>
+<div class="space-y-4 relative before:absolute before:left-2 before:top-2 before:bottom-2 before:w-[1px] before:bg-slate-200">
+<div class="relative pl-8">
+<div class="absolute left-0 top-1 w-4 h-4 rounded-full bg-white border-2 border-primary"></div>
+<p class="text-xs font-bold text-on-surface">Status changed to Active</p>
+<p class="text-[10px] text-slate-400">Marcus Thorne • 2 hours ago</p>
+</div>
+<div class="relative pl-8">
+<div class="absolute left-1 top-1.5 w-2 h-2 rounded-full bg-slate-300"></div>
+<p class="text-xs text-slate-600">Risk entry created</p>
+<p class="text-[10px] text-slate-400">Marcus Thorne • 3 days ago</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</body></html>

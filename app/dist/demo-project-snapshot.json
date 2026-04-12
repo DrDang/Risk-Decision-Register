@@ -1,0 +1,333 @@
+{
+  "version": "1",
+  "exportedAt": "2026-04-11T22:00:00.000Z",
+  "activeProjectId": "proj-alpha-demo",
+  "projects": [
+    {
+      "id": "proj-alpha-demo",
+      "name": "Project Alpha Demo",
+      "description": "Example governance and delivery risk tracking project for demos and training.",
+      "createdAt": "2026-01-01",
+      "scoringModel": {
+        "likelihood": [
+          {
+            "value": 1,
+            "label": "Rare",
+            "description": "Unlikely to occur except in exceptional circumstances."
+          },
+          {
+            "value": 2,
+            "label": "Unlikely",
+            "description": "Could occur, but not expected during normal execution."
+          },
+          {
+            "value": 3,
+            "label": "Possible",
+            "description": "Reasonably plausible and should be considered in planning."
+          },
+          {
+            "value": 4,
+            "label": "Likely",
+            "description": "Expected to occur in many realistic scenarios."
+          },
+          {
+            "value": 5,
+            "label": "Almost Certain",
+            "description": "Expected to occur frequently or is already emerging."
+          }
+        ],
+        "impact": [
+          {
+            "value": 1,
+            "label": "Minimal",
+            "description": "Minor effect with little operational disruption."
+          },
+          {
+            "value": 2,
+            "label": "Minor",
+            "description": "Limited impact requiring small local adjustments."
+          },
+          {
+            "value": 3,
+            "label": "Moderate",
+            "description": "Noticeable impact to delivery, cost, or performance."
+          },
+          {
+            "value": 4,
+            "label": "Major",
+            "description": "Serious disruption requiring management attention and recovery effort."
+          },
+          {
+            "value": 5,
+            "label": "Severe",
+            "description": "Critical impact to mission, compliance, or core service continuity."
+          }
+        ]
+      },
+      "risks": [
+        {
+          "id": "RSK-0024",
+          "title": "Cloud Latency Spike",
+          "statement": "IF regional traffic surges exceed current throttling thresholds, THEN platform response times degrade for priority workflows, RESULTING IN missed service commitments and customer churn risk.",
+          "trigger": "regional traffic surges exceed current throttling thresholds",
+          "consequence": "platform response times degrade for priority workflows",
+          "resultingIn": "missed service commitments and customer churn risk",
+          "status": "Active",
+          "severity": "High",
+          "owner": "Sarah Jenkins",
+          "likelihood": 4,
+          "impact": 5,
+          "residualRating": "High (20)",
+          "category": "Infrastructure",
+          "responseType": "Mitigate",
+          "project": "Alpha Core",
+          "lastUpdated": "2 hours ago",
+          "dueDate": "2026-04-18",
+          "mitigation": "Scale multi-region redundancy and tighten dynamic traffic shaping during peak windows.",
+          "contingency": "Fail over read-heavy traffic to the alternate region if latency remains above threshold for more than 5 minutes.",
+          "linkedDecision": "DEC-202",
+          "attachments": 3,
+          "comments": 4,
+          "createdBy": "Marcus Thorne",
+          "internalOnly": false,
+          "history": [
+            {
+              "label": "Severity escalated from Medium to High",
+              "meta": "Sarah Jenkins • 2 hours ago"
+            },
+            {
+              "label": "Mitigation plan updated",
+              "meta": "Marcus Thorne • Yesterday"
+            },
+            {
+              "label": "Risk created",
+              "meta": "Marcus Thorne • Apr 05, 2026"
+            }
+          ]
+        },
+        {
+          "id": "RSK-0023",
+          "title": "Data Residency Compliance Shift",
+          "statement": "IF EU residency obligations tighten after the policy update, THEN current data handling controls may become non-compliant, RESULTING IN remediation cost and release delays.",
+          "trigger": "EU residency obligations tighten after the policy update",
+          "consequence": "current data handling controls may become non-compliant",
+          "resultingIn": "remediation cost and release delays",
+          "status": "Monitoring",
+          "severity": "Medium",
+          "owner": "Marcus Thorne",
+          "likelihood": 3,
+          "impact": 4,
+          "residualRating": "Medium (12)",
+          "category": "Compliance",
+          "responseType": "Mitigate",
+          "project": "Alpha Core",
+          "lastUpdated": "Yesterday",
+          "dueDate": "2026-04-25",
+          "mitigation": "Map hosted datasets to residency zones and complete counsel review before architecture sign-off.",
+          "contingency": "Pause rollout in affected regions and apply temporary data segregation rules.",
+          "linkedDecision": "DEC-204",
+          "attachments": 2,
+          "comments": 2,
+          "createdBy": "Sarah Jenkins",
+          "internalOnly": true,
+          "history": [
+            {
+              "label": "Review date moved forward",
+              "meta": "Marcus Thorne • Yesterday"
+            },
+            {
+              "label": "Status changed to Monitoring",
+              "meta": "Sarah Jenkins • Apr 08, 2026"
+            }
+          ]
+        },
+        {
+          "id": "RSK-0021",
+          "title": "Database Replication Lag",
+          "statement": "IF replication lag increases during overnight sync windows, THEN downstream reporting may use stale records, RESULTING IN operational rework and decision delay.",
+          "trigger": "replication lag increases during overnight sync windows",
+          "consequence": "downstream reporting may use stale records",
+          "resultingIn": "operational rework and decision delay",
+          "status": "Monitoring",
+          "severity": "Medium",
+          "owner": "A. Chen",
+          "likelihood": 3,
+          "impact": 3,
+          "residualRating": "Medium (9)",
+          "category": "Platform",
+          "responseType": "Mitigate",
+          "project": "Core Data Services",
+          "lastUpdated": "12 hours ago",
+          "dueDate": "2026-04-20",
+          "mitigation": "Rebalance jobs and reduce write contention during reconciliation windows.",
+          "contingency": "Fallback to delayed morning distribution if replication exceeds threshold.",
+          "linkedDecision": "None",
+          "attachments": 1,
+          "comments": 1,
+          "createdBy": "A. Chen",
+          "internalOnly": true,
+          "history": [
+            {
+              "label": "Mitigation owner reassigned",
+              "meta": "Marcus Thorne • 12 hours ago"
+            },
+            {
+              "label": "Risk reviewed",
+              "meta": "A. Chen • Apr 07, 2026"
+            }
+          ]
+        },
+        {
+          "id": "RSK-0018",
+          "title": "Vendor Patch Delay",
+          "statement": "IF the authentication vendor delays the scheduled patch, THEN unresolved vulnerabilities remain in production longer, RESULTING IN elevated exposure and exception requests.",
+          "trigger": "the authentication vendor delays the scheduled patch",
+          "consequence": "unresolved vulnerabilities remain in production longer",
+          "resultingIn": "elevated exposure and exception requests",
+          "status": "Active",
+          "severity": "High",
+          "owner": "R. Patel",
+          "likelihood": 4,
+          "impact": 4,
+          "residualRating": "High (16)",
+          "category": "Third Party",
+          "responseType": "Transfer",
+          "project": "Identity Platform",
+          "lastUpdated": "3 days ago",
+          "dueDate": "2026-04-16",
+          "mitigation": "Apply compensating monitoring and track vendor patch verification daily.",
+          "contingency": "Escalate contractual remediation and isolate exposed workflows.",
+          "linkedDecision": "DEC-198",
+          "attachments": 4,
+          "comments": 3,
+          "createdBy": "R. Patel",
+          "internalOnly": false,
+          "history": [
+            {
+              "label": "Exception request added",
+              "meta": "R. Patel • 3 days ago"
+            },
+            {
+              "label": "Severity confirmed High",
+              "meta": "Security Council • Apr 03, 2026"
+            }
+          ]
+        }
+      ],
+      "decisions": [
+        {
+          "id": "DEC-202",
+          "title": "Zero-Trust Protocol V2",
+          "summary": "Require per-session verification across internal services and retire long-lived tokens.",
+          "status": "Approved",
+          "deciders": "Security Council",
+          "date": "Apr 09, 2026",
+          "linkedRisks": [
+            "RSK-0024",
+            "RSK-0018"
+          ],
+          "context": "Long-lived session tokens have been identified as a lateral movement risk in two active risk records. Current authentication architecture relies on tokens valid for up to 24 hours, which extends the blast radius of any credential compromise. An upcoming SOC 2 audit requires demonstrable controls around session management.",
+          "decisionDrivers": [
+            "Reduce lateral movement risk from compromised credentials",
+            "Align with SOC 2 Type II session control requirements",
+            "Limit blast radius of any single identity compromise"
+          ],
+          "consideredOptions": [
+            "Adopt per-session verification (Zero-Trust V2) across all internal services",
+            "Keep current token duration with added anomaly detection",
+            "Pilot zero-trust only on privileged services, defer broad rollout"
+          ],
+          "outcome": "We adopted per-session verification across all internal services and retired long-lived tokens. The pilot-only option was rejected because partial coverage would leave high-value internal APIs unprotected during the audit window. Anomaly detection alone was judged insufficient as a primary control.",
+          "goodConsequences": [
+            "Significantly reduces lateral movement risk if credentials are compromised",
+            "Satisfies SOC 2 session management controls ahead of audit",
+            "Establishes a consistent identity posture across all internal service boundaries"
+          ],
+          "badConsequences": [
+            "Increases authentication overhead per request — latency impact must be monitored",
+            "Requires coordinated rollout across multiple platform teams"
+          ],
+          "moreInfo": "Implementation tracked under RSK-0024 and RSK-0018. Architecture review completed Apr 07, 2026. Rollout plan owned by Platform team.",
+          "approvalChain": [
+            "Security Architecture sign-off",
+            "Platform review complete",
+            "Council vote recorded"
+          ]
+        },
+        {
+          "id": "DEC-204",
+          "title": "Regional Data Residency Migration",
+          "summary": "Move regulated datasets into region-specific storage and processing boundaries.",
+          "status": "Implemented",
+          "deciders": "Steering Committee",
+          "date": "Apr 02, 2026",
+          "linkedRisks": [
+            "RSK-0023"
+          ],
+          "context": "Pending EU policy changes may tighten data residency obligations for regulated datasets currently stored in a multi-region bucket. Legal counsel flagged that the current architecture creates ambiguity about which jurisdiction governs specific datasets, creating remediation risk if the policy update is enacted before the next release.",
+          "decisionDrivers": [
+            "Eliminate legal ambiguity over dataset jurisdiction before policy effective date",
+            "Avoid release delays due to mid-cycle compliance remediation",
+            "Reduce per-exception handling burden on legal and operations teams"
+          ],
+          "consideredOptions": [
+            "Migrate regulated datasets to region-specific storage boundaries",
+            "Apply manual data handling exceptions per dataset on request",
+            "Implement a temporary legal hold process and defer migration"
+          ],
+          "outcome": "We decided to migrate all regulated datasets into region-specific storage and processing boundaries before the policy effective date. Manual exceptions were rejected due to operational overhead and error risk at scale. The legal hold process was judged as a short-term workaround that would not survive a compliance audit.",
+          "goodConsequences": [
+            "Removes compliance ambiguity and simplifies legal review for future releases",
+            "Reduces operational burden from per-dataset exception handling"
+          ],
+          "badConsequences": [
+            "Requires engineering effort to re-architect data pipelines per region",
+            "Short-term release velocity impact while migration is in progress"
+          ],
+          "moreInfo": "Migration verified complete Apr 02, 2026. Linked to RSK-0023 for ongoing monitoring.",
+          "approvalChain": [
+            "Legal review complete",
+            "Operations approval complete",
+            "Implementation verified"
+          ]
+        },
+        {
+          "id": "DEC-198",
+          "title": "Authentication Vendor Patch Exception",
+          "summary": "Accept short-term compensating controls while vendor remediation is in progress.",
+          "status": "Deferred",
+          "deciders": "Risk Committee",
+          "date": "Mar 30, 2026",
+          "linkedRisks": [
+            "RSK-0018"
+          ],
+          "context": "The authentication vendor has delayed a critical patch by at least 3 weeks. Unresolved vulnerabilities remain in the production identity platform. Replacing the vendor or disabling the service would cause significant disruption. The committee must decide whether to accept the delay with compensating controls or escalate to a wider platform change.",
+          "decisionDrivers": [
+            "Minimise service disruption during vendor remediation window",
+            "Maintain acceptable risk exposure through compensating monitoring",
+            "Preserve optionality for a vendor replacement if the delay extends"
+          ],
+          "consideredOptions": [
+            "Accept the delay with enhanced compensating monitoring and daily patch tracking",
+            "Initiate immediate vendor replacement",
+            "Temporarily disable the exposed authentication service"
+          ],
+          "outcome": "The committee deferred a wider platform change and accepted the delay with compensating controls. Immediate vendor replacement was rejected due to the complexity and lead time involved. Disabling the service was not feasible without an alternative in place.",
+          "goodConsequences": [
+            "Avoids disruptive vendor change during an active delivery cycle",
+            "Daily tracking ensures the delay does not silently extend beyond the agreed window"
+          ],
+          "badConsequences": [
+            "Compensating controls are not equivalent to the patch — residual risk remains elevated",
+            "If the vendor delays beyond the agreed date, escalation options narrow"
+          ],
+          "moreInfo": "Exception expires when vendor confirms patch deployment. Escalation criteria: delay extends past Apr 30, 2026.",
+          "approvalChain": [
+            "Risk review logged",
+            "Committee deferral recorded"
+          ]
+        }
+      ]
+    }
+  ]
+}

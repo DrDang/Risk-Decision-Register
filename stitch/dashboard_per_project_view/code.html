@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>The Governed Surface | Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-primary": "#f7f7ff",
+                    "tertiary-container": "#dae2fd",
+                    "secondary-container": "#d5e3fc",
+                    "error-dim": "#4e0309",
+                    "outline-variant": "#a9b4b9",
+                    "on-secondary-container": "#455367",
+                    "secondary": "#526074",
+                    "on-background": "#2a3439",
+                    "on-tertiary-fixed-variant": "#535b71",
+                    "primary-fixed-dim": "#c5d4fa",
+                    "surface-container-lowest": "#ffffff",
+                    "inverse-surface": "#0b0f10",
+                    "secondary-dim": "#465468",
+                    "on-error": "#fff7f6",
+                    "inverse-primary": "#c7d7fd",
+                    "surface-container-low": "#f0f4f7",
+                    "on-primary-fixed": "#303f5d",
+                    "surface-container-highest": "#d9e4ea",
+                    "surface": "#f7f9fb",
+                    "on-secondary": "#f8f8ff",
+                    "tertiary-fixed": "#dae2fd",
+                    "tertiary-dim": "#4b5369",
+                    "error-container": "#fe8983",
+                    "outline": "#717c82",
+                    "secondary-fixed": "#d5e3fc",
+                    "on-tertiary": "#f9f8ff",
+                    "on-primary-container": "#425271",
+                    "on-error-container": "#752121",
+                    "primary-dim": "#435272",
+                    "secondary-fixed-dim": "#c7d5ed",
+                    "on-tertiary-container": "#4a5167",
+                    "background": "#f7f9fb",
+                    "surface-tint": "#4f5e7e",
+                    "primary-fixed": "#d7e2ff",
+                    "surface-variant": "#d9e4ea",
+                    "tertiary": "#575f75",
+                    "on-surface-variant": "#566166",
+                    "error": "#9f403d",
+                    "on-secondary-fixed": "#324053",
+                    "tertiary-fixed-dim": "#ccd4ee",
+                    "primary": "#4f5e7e",
+                    "primary-container": "#d7e2ff",
+                    "surface-container-high": "#e1e9ee",
+                    "on-tertiary-fixed": "#373f54",
+                    "inverse-on-surface": "#9a9d9f",
+                    "on-surface": "#2a3439",
+                    "surface-container": "#e8eff3",
+                    "surface-dim": "#cfdce3",
+                    "surface-bright": "#f7f9fb",
+                    "on-secondary-fixed-variant": "#4e5c71",
+                    "on-primary-fixed-variant": "#4c5c7b"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "fontFamily": {
+                    "headline": ["Manrope"],
+                    "body": ["Inter"],
+                    "label": ["Inter"]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body { font-family: 'Inter', sans-serif; }
+        h1, h2, h3 { font-family: 'Manrope', sans-serif; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(24px);
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface">
+<!-- SideNavBar Component -->
+<aside class="fixed left-0 top-0 h-screen w-64 bg-slate-100 dark:bg-slate-900 flex flex-col py-6 px-4 z-50">
+<div class="mb-8 px-2 flex items-center gap-3 bg-surface-container-highest rounded-xl p-3">
+<div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center text-white">
+<span class="material-symbols-outlined" data-icon="corporate_fare">corporate_fare</span>
+</div>
+<div>
+<div class="text-slate-800 dark:text-slate-100 text-lg font-bold leading-tight">Project Alpha</div>
+<div class="text-xs text-on-surface-variant font-medium">Governance Oversight</div>
+</div>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-3 px-3 py-3 rounded-lg text-slate-900 dark:text-white font-bold border-r-4 border-slate-600 bg-slate-200 dark:bg-slate-800 transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="text-sm font-label">Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-3 rounded-lg text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="security">security</span>
+<span class="text-sm font-label">Risk Register</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-3 rounded-lg text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="gavel">gavel</span>
+<span class="text-sm font-label">Decision Register</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-3 rounded-lg text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="task_alt">task_alt</span>
+<span class="text-sm font-label">Mitigation Actions</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-3 rounded-lg text-slate-500 dark:text-slate-400 font-medium hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors mt-auto" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="text-sm font-label">Settings</span>
+</a>
+</nav>
+<div class="mt-auto px-2 pt-6">
+<div class="flex items-center gap-3 p-2 rounded-xl bg-surface-container-low">
+<div class="w-8 h-8 rounded-full bg-primary-fixed-dim flex items-center justify-center text-primary overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="professional male portrait for user avatar in a governance dashboard environment" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDWt3mWtN5c_w7-x9dLnPVFna3VnYIhgTro66--eSVdvfu_vPZ6XM4_cfsh95YG0ht1LsMJITytMYHBCpdyapBZEjppxsQ91AnHAyvFIcseuh0LfEQvaxBLKU_AqyOLoUaPCJK2cBRgC-T3TWWNFBrqxJGpdJWPRoyJElwhQH_2hsnBi6ifyN4QpQ-EP4E_7iH6RS87LFcSJKDnqPh_s2BlQ-yeHp7GhjMirWyB5vpZHZVRTP3U5vKrzoGkPQDbRd7gzJho23HLPQ"/>
+</div>
+<div class="overflow-hidden">
+<div class="text-xs font-bold truncate">Alex Sterling</div>
+<div class="text-[10px] text-on-surface-variant">Senior Auditor</div>
+</div>
+</div>
+</div>
+</aside>
+<!-- TopNavBar Component -->
+<header class="fixed top-0 left-64 right-0 h-16 bg-slate-50 dark:bg-slate-950 flex justify-between items-center px-8 z-40">
+<div class="flex items-center gap-6">
+<div class="relative group">
+<span class="absolute inset-y-0 left-3 flex items-center text-on-surface-variant">
+<span class="material-symbols-outlined text-xl" data-icon="search">search</span>
+</span>
+<input class="bg-surface-container-lowest border-none rounded-full py-2 pl-10 pr-4 w-80 text-sm focus:ring-0 focus:border-b-2 border-primary-fixed transition-all shadow-sm" placeholder="Search governance data..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<h1 class="text-xl font-black text-slate-800 dark:text-slate-100 tracking-tight">The Governed Surface</h1>
+<div class="h-6 w-[1px] bg-outline-variant opacity-30 mx-2"></div>
+<button class="p-2 text-slate-500 hover:text-slate-800 dark:hover:text-slate-100 transition-opacity">
+<span class="material-symbols-outlined" data-icon="help">help</span>
+</button>
+</div>
+</header>
+<!-- Main Content -->
+<main class="ml-64 mt-16 p-8 min-h-screen bg-surface">
+<!-- Header Section -->
+<header class="mb-12">
+<div class="flex items-end justify-between">
+<div>
+<span class="text-xs font-bold text-primary tracking-widest uppercase mb-2 block">System Overview</span>
+<h2 class="text-4xl font-extrabold text-on-surface leading-tight">Executive Dashboard</h2>
+</div>
+<div class="flex gap-3">
+<button class="px-5 py-2.5 rounded-lg bg-surface-container-highest text-on-surface-variant text-sm font-semibold hover:bg-surface-container-high transition-colors">
+                        Download Report
+                    </button>
+<button class="px-5 py-2.5 rounded-lg bg-gradient-to-br from-primary to-primary-dim text-white text-sm font-bold shadow-lg shadow-primary/20 flex items-center gap-2">
+<span class="material-symbols-outlined text-lg" data-icon="add">add</span>
+                        New Assessment
+                    </button>
+</div>
+</div>
+</header>
+<!-- Metrics Grid (Bento Style) -->
+<div class="grid grid-cols-12 gap-6 mb-8">
+<!-- Key Metric: Overdue Mitigations -->
+<div class="col-span-12 md:col-span-4 bg-surface-container-lowest rounded-xl p-6 shadow-[0_12px_40px_rgba(42,52,57,0.04)] relative overflow-hidden group">
+<div class="absolute top-0 right-0 p-4 opacity-10">
+<span class="material-symbols-outlined text-6xl" data-icon="running_with_errors">running_with_errors</span>
+</div>
+<div class="relative z-10">
+<p class="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-1">Overdue Mitigations</p>
+<div class="flex items-baseline gap-2">
+<span class="text-4xl font-bold text-error">12</span>
+<span class="text-sm font-medium text-error-container bg-error-dim/10 px-2 py-0.5 rounded-full">+4 this week</span>
+</div>
+<div class="mt-4 w-full h-1 bg-surface-container rounded-full overflow-hidden">
+<div class="h-full bg-error w-3/4 rounded-full"></div>
+</div>
+</div>
+</div>
+<!-- Key Metric: Risks Due Review -->
+<div class="col-span-12 md:col-span-4 bg-surface-container-lowest rounded-xl p-6 shadow-[0_12px_40px_rgba(42,52,57,0.04)] relative overflow-hidden">
+<p class="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-1">Risks Due Review</p>
+<div class="flex items-baseline gap-2">
+<span class="text-4xl font-bold text-on-surface">08</span>
+<span class="text-xs font-medium text-on-surface-variant">Target: 48hrs</span>
+</div>
+<div class="mt-6 flex gap-1">
+<div class="h-8 flex-1 bg-error rounded-sm"></div>
+<div class="h-8 flex-1 bg-error rounded-sm opacity-60"></div>
+<div class="h-8 flex-1 bg-surface-container-high rounded-sm"></div>
+<div class="h-8 flex-1 bg-surface-container-high rounded-sm"></div>
+<div class="h-8 flex-1 bg-surface-container-high rounded-sm"></div>
+</div>
+</div>
+<!-- Key Metric: Unlinked Risks -->
+<div class="col-span-12 md:col-span-4 bg-surface-container-lowest rounded-xl p-6 shadow-[0_12px_40px_rgba(42,52,57,0.04)]">
+<p class="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-1">Unlinked Risks</p>
+<div class="flex items-center gap-4">
+<span class="text-4xl font-bold text-tertiary">03</span>
+<div class="flex -space-x-2">
+<div class="w-8 h-8 rounded-full bg-slate-200 border-2 border-white flex items-center justify-center text-[10px] font-bold">JD</div>
+<div class="w-8 h-8 rounded-full bg-slate-300 border-2 border-white flex items-center justify-center text-[10px] font-bold">AS</div>
+<div class="w-8 h-8 rounded-full bg-slate-400 border-2 border-white flex items-center justify-center text-[10px] font-bold text-white">4+</div>
+</div>
+</div>
+<p class="text-xs text-on-surface-variant mt-4 leading-relaxed">Critical items requiring upstream dependency mapping.</p>
+</div>
+</div>
+<!-- Asymmetric Layout: Risk Heat Map & Decisions -->
+<div class="grid grid-cols-12 gap-8">
+<!-- Risk Heat Map (Large) -->
+<div class="col-span-12 lg:col-span-7 bg-surface-container-low rounded-xl p-8">
+<div class="flex justify-between items-start mb-8">
+<div>
+<h3 class="text-xl font-bold text-on-surface">5x5 Risk Heat Map</h3>
+<p class="text-sm text-on-surface-variant">Aggregated risk posture by impact vs. likelihood</p>
+</div>
+<div class="flex gap-2">
+<button class="p-2 bg-surface-container-lowest rounded-lg shadow-sm">
+<span class="material-symbols-outlined text-lg" data-icon="filter_list">filter_list</span>
+</button>
+</div>
+</div>
+<div class="grid grid-cols-6 gap-2">
+<!-- Labels -->
+<div class="col-span-1 flex flex-col justify-between py-2 text-[10px] font-bold text-on-surface-variant uppercase">
+<span>High</span>
+<span>Med</span>
+<span>Low</span>
+</div>
+<div class="col-span-5 grid grid-cols-5 gap-2">
+<!-- Heatmap Grid -->
+<!-- Row 1 -->
+<div class="aspect-square rounded bg-tertiary-container/30 flex items-center justify-center text-xs font-bold">2</div>
+<div class="aspect-square rounded bg-tertiary-container/50 flex items-center justify-center text-xs font-bold">4</div>
+<div class="aspect-square rounded bg-orange-200 flex items-center justify-center text-xs font-bold">1</div>
+<div class="aspect-square rounded bg-error-container/60 flex items-center justify-center text-xs font-bold">3</div>
+<div class="aspect-square rounded bg-error flex items-center justify-center text-white text-xs font-bold">1</div>
+<!-- Row 2 -->
+<div class="aspect-square rounded bg-tertiary-container/20"></div>
+<div class="aspect-square rounded bg-tertiary-container/40 flex items-center justify-center text-xs font-bold">5</div>
+<div class="aspect-square rounded bg-orange-100 flex items-center justify-center text-xs font-bold">8</div>
+<div class="aspect-square rounded bg-error-container/40 flex items-center justify-center text-xs font-bold">2</div>
+<div class="aspect-square rounded bg-error-container flex items-center justify-center text-xs font-bold">4</div>
+<!-- Row 3 -->
+<div class="aspect-square rounded bg-tertiary-container/10"></div>
+<div class="aspect-square rounded bg-tertiary-container/20"></div>
+<div class="aspect-square rounded bg-tertiary-container/50 flex items-center justify-center text-xs font-bold">12</div>
+<div class="aspect-square rounded bg-orange-100 flex items-center justify-center text-xs font-bold">6</div>
+<div class="aspect-square rounded bg-error-container/30"></div>
+<!-- Row 4 -->
+<div class="aspect-square rounded bg-tertiary-container/5"></div>
+<div class="aspect-square rounded bg-tertiary-container/10"></div>
+<div class="aspect-square rounded bg-tertiary-container/20 flex items-center justify-center text-xs font-bold">2</div>
+<div class="aspect-square rounded bg-tertiary-container/40"></div>
+<div class="aspect-square rounded bg-orange-100"></div>
+<!-- Row 5 -->
+<div class="aspect-square rounded bg-tertiary-container/5"></div>
+<div class="aspect-square rounded bg-tertiary-container/5"></div>
+<div class="aspect-square rounded bg-tertiary-container/10"></div>
+<div class="aspect-square rounded bg-tertiary-container/20"></div>
+<div class="aspect-square rounded bg-tertiary-container/30 flex items-center justify-center text-xs font-bold">1</div>
+</div>
+<!-- Bottom Labels -->
+<div class="col-start-2 col-span-5 flex justify-between pt-4 text-[10px] font-bold text-on-surface-variant uppercase">
+<span>Negligible</span>
+<span>Minor</span>
+<span>Moderate</span>
+<span>Major</span>
+<span>Extreme</span>
+</div>
+</div>
+</div>
+<!-- Recent Decisions (Editorial List) -->
+<div class="col-span-12 lg:col-span-5">
+<div class="bg-surface-container-lowest rounded-xl p-8 border-l-4 border-primary">
+<h3 class="text-xl font-bold text-on-surface mb-6">Recent Decisions</h3>
+<div class="space-y-6">
+<!-- Decision Item -->
+<div class="group">
+<div class="flex items-start gap-4">
+<div class="mt-1 w-2 h-2 rounded-full bg-primary flex-shrink-0"></div>
+<div>
+<h4 class="text-sm font-bold text-on-surface group-hover:text-primary transition-colors">Vendor Compliance Override: Module 4</h4>
+<p class="text-xs text-on-surface-variant mt-1">Approved by Compliance Committee following risk mitigation audit.</p>
+<div class="flex items-center gap-3 mt-2">
+<span class="text-[10px] font-bold text-secondary uppercase bg-secondary-container px-2 py-0.5 rounded">High Impact</span>
+<span class="text-[10px] text-on-surface-variant font-medium">Oct 24, 2023</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Decision Item -->
+<div class="group">
+<div class="flex items-start gap-4">
+<div class="mt-1 w-2 h-2 rounded-full bg-outline-variant flex-shrink-0"></div>
+<div>
+<h4 class="text-sm font-bold text-on-surface group-hover:text-primary transition-colors">Infrastructure Scaling Plan (FY24)</h4>
+<p class="text-xs text-on-surface-variant mt-1">Strategic alignment with technical risk threshold accepted.</p>
+<div class="flex items-center gap-3 mt-2">
+<span class="text-[10px] font-bold text-secondary uppercase bg-secondary-container px-2 py-0.5 rounded">Med Impact</span>
+<span class="text-[10px] text-on-surface-variant font-medium">Oct 22, 2023</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Decision Item -->
+<div class="group">
+<div class="flex items-start gap-4">
+<div class="mt-1 w-2 h-2 rounded-full bg-outline-variant flex-shrink-0"></div>
+<div>
+<h4 class="text-sm font-bold text-on-surface group-hover:text-primary transition-colors">Audit Scope Expansion: North Region</h4>
+<p class="text-xs text-on-surface-variant mt-1">Revised scope to include cross-border data residency risks.</p>
+<div class="flex items-center gap-3 mt-2">
+<span class="text-[10px] font-bold text-secondary uppercase bg-secondary-container px-2 py-0.5 rounded">Low Impact</span>
+<span class="text-[10px] text-on-surface-variant font-medium">Oct 19, 2023</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<button class="w-full mt-8 py-3 text-xs font-bold text-primary uppercase tracking-widest border border-dashed border-outline-variant rounded-lg hover:bg-surface-container transition-colors">
+                        View Decision Ledger
+                    </button>
+</div>
+<!-- Small Context Card -->
+<div class="mt-8 bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl p-6 text-white relative overflow-hidden">
+<div class="relative z-10">
+<span class="material-symbols-outlined text-white/50 mb-2" data-icon="auto_awesome">auto_awesome</span>
+<h4 class="text-sm font-bold">Predictive Risk Insight</h4>
+<p class="text-xs text-white/70 mt-2 leading-relaxed">Based on current mitigation trends, your "Regulatory" risk category is projected to move from High to Medium by Q4.</p>
+</div>
+<div class="absolute -bottom-4 -right-4 w-24 h-24 bg-white/5 rounded-full blur-2xl"></div>
+</div>
+</div>
+</div>
+</main>
+<!-- FAB (Suppressed on Dashboard as it's not transactional context but navigational oversight) -->
+</body></html>
