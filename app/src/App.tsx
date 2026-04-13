@@ -2154,6 +2154,10 @@ function SnapshotPage({
             Import replaces the current local snapshot in this browser. Export first if you want a rollback point before bringing in another teammate&apos;s revision.
           </div>
 
+          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm leading-relaxed text-emerald-900">
+            Snapshots include each project&apos;s saved Likelihood and Impact scoring definitions, so imported projects retain the same scoring model that was configured before export.
+          </div>
+
           <div className="mt-4 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4 text-sm leading-relaxed text-on-surface-variant">
             Want example content for a demo or walkthrough? Download the bundled
             {' '}
@@ -4698,7 +4702,9 @@ function MitigationPlanField({
           </div>
         </div>
       ) : (
-        <p className="text-sm leading-relaxed text-on-surface-variant">{viewValue}</p>
+        <p className={`text-sm leading-relaxed ${viewValue.trim() ? 'text-on-surface-variant' : 'font-medium text-error'}`}>
+          {viewValue.trim() ? viewValue : 'Mitigation plan not yet defined.'}
+        </p>
       )}
     </div>
   );
