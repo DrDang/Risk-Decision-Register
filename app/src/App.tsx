@@ -1568,6 +1568,7 @@ function CreateRiskModal({
     status: RiskStatus;
   }) => void;
 }) {
+  const backdropPressStarted = useRef(false);
   const [form, setForm] = useState({
     id: nextRiskId,
     title: '',
@@ -1633,11 +1634,30 @@ function CreateRiskModal({
   const isValid = missingFields.length === 0 && !duplicateId;
 
   return (
-    <div className="fixed inset-0 z-[60] overflow-y-auto bg-slate-950/20" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[60] overflow-y-auto bg-slate-950/20"
+      onClick={(event) => {
+        if (backdropPressStarted.current && event.target === event.currentTarget) {
+          onClose();
+        }
+        backdropPressStarted.current = false;
+      }}
+      onMouseDown={(event) => {
+        backdropPressStarted.current = event.target === event.currentTarget;
+      }}
+      onMouseUp={() => {
+        window.setTimeout(() => {
+          backdropPressStarted.current = false;
+        }, 0);
+      }}
+    >
       <div className="flex min-h-full items-start justify-center px-6 py-6 lg:items-center">
         <div
           className="flex max-h-[calc(100vh-3rem)] w-full max-w-3xl flex-col rounded-[2rem] bg-white shadow-[0_28px_80px_rgba(42,52,57,0.18)]"
           onClick={(event) => event.stopPropagation()}
+          onMouseDown={() => {
+            backdropPressStarted.current = false;
+          }}
         >
           <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
             <div>
@@ -1778,22 +1798,50 @@ function CreateRiskModal({
                 </FormField>
               </div>
 
-              <FormField label="Trigger / Condition">
-                <textarea
-                  className="min-h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
-                  onChange={(event) => setForm((current) => ({...current, trigger: event.target.value}))}
-                  placeholder="Describe the condition that could trigger this risk"
-                  value={form.trigger}
-                />
-              </FormField>
-              <FormField label="Consequence">
-                <textarea
-                  className="min-h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
-                  onChange={(event) => setForm((current) => ({...current, consequence: event.target.value}))}
-                  placeholder="Describe the immediate consequence"
-                  value={form.consequence}
-                />
-              </FormField>
+              <div className="rounded-3xl border border-slate-200 bg-slate-50/70 px-4 py-4">
+                <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Risk Statement Structure</div>
+                <div className="mb-4 text-sm leading-relaxed text-on-surface-variant">
+                  Enter the risk in this format:
+                  {' '}
+                  <span className="font-semibold text-on-surface">IF</span>
+                  {' '}
+                  trigger / condition,
+                  {' '}
+                  <span className="font-semibold text-on-surface">THEN</span>
+                  {' '}
+                  consequence.
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                      <span className="text-on-surface">IF</span>
+                      {' '}
+                      Trigger / Condition
+                    </div>
+                    <textarea
+                      className="min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
+                      onChange={(event) => setForm((current) => ({...current, trigger: event.target.value}))}
+                      placeholder="Describe the condition that could trigger this risk"
+                      value={form.trigger}
+                    />
+                  </div>
+
+                  <div>
+                    <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                      <span className="text-on-surface">THEN</span>
+                      {' '}
+                      Consequence
+                    </div>
+                    <textarea
+                      className="min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
+                      onChange={(event) => setForm((current) => ({...current, consequence: event.target.value}))}
+                      placeholder="Describe the immediate consequence"
+                      value={form.consequence}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="space-y-4 lg:sticky lg:top-0 lg:self-start">
@@ -3413,6 +3461,7 @@ function CreateDecisionModal({
     outcome: string;
   }) => void;
 }) {
+  const backdropPressStarted = useRef(false);
   const [form, setForm] = useState({
     id: nextDecisionId,
     title: '',
@@ -3479,11 +3528,30 @@ function CreateDecisionModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] overflow-y-auto bg-slate-950/20" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[60] overflow-y-auto bg-slate-950/20"
+      onClick={(event) => {
+        if (backdropPressStarted.current && event.target === event.currentTarget) {
+          onClose();
+        }
+        backdropPressStarted.current = false;
+      }}
+      onMouseDown={(event) => {
+        backdropPressStarted.current = event.target === event.currentTarget;
+      }}
+      onMouseUp={() => {
+        window.setTimeout(() => {
+          backdropPressStarted.current = false;
+        }, 0);
+      }}
+    >
       <div className="flex min-h-full items-start justify-center px-6 py-6 lg:items-center">
         <div
           className="flex max-h-[calc(100vh-3rem)] w-full max-w-xl flex-col rounded-[2rem] bg-white shadow-[0_28px_80px_rgba(42,52,57,0.18)]"
           onClick={(e) => e.stopPropagation()}
+          onMouseDown={() => {
+            backdropPressStarted.current = false;
+          }}
         >
           <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
             <div>
@@ -3658,7 +3726,6 @@ function RiskDrawer({
   const [savedFieldLabel, setSavedFieldLabel] = useState<string | null>(null);
   const [editingStatement, setEditingStatement] = useState(false);
   const [editingMitigation, setEditingMitigation] = useState(false);
-  const [showScoringGuide, setShowScoringGuide] = useState(false);
   const [pendingScoreChange, setPendingScoreChange] = useState<{field: 'likelihood' | 'impact'; value: number} | null>(null);
   const [scoreChangeReason, setScoreChangeReason] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -3676,7 +3743,6 @@ function RiskDrawer({
     setEditingField(null);
     setEditingStatement(false);
     setEditingMitigation(false);
-    setShowScoringGuide(false);
     setPendingScoreChange(null);
     setScoreChangeReason('');
     setConfirmDelete(false);
@@ -3829,9 +3895,6 @@ function RiskDrawer({
   }
 
   const mitigationRequired = risk.severity !== 'Low';
-  const likelihoodDefinition = getScoreDefinition(scoringModel.likelihood, risk.likelihood);
-  const impactDefinition = getScoreDefinition(scoringModel.impact, risk.impact);
-
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/10" onClick={onClose}>
       <aside
@@ -4039,10 +4102,7 @@ function RiskDrawer({
           </div>
         ) : null}
 
-        <DrawerSection
-          action={<ScoringGuideButton open={showScoringGuide} onClick={() => setShowScoringGuide((current) => !current)} />}
-          title="Assessment"
-        >
+        <DrawerSection title="Assessment">
           <div className="rounded-2xl bg-surface-container-low p-4">
             <div className="grid grid-cols-2 gap-4">
               <QuickEditSelect
@@ -4075,38 +4135,6 @@ function RiskDrawer({
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <DrawerMeta
-              label="Likelihood Definition"
-              value={likelihoodDefinition ? `${likelihoodDefinition.value} - ${likelihoodDefinition.label}` : 'Not set'}
-            />
-            <DrawerMeta
-              label="Impact Definition"
-              value={impactDefinition ? `${impactDefinition.value} - ${impactDefinition.label}` : 'Not set'}
-            />
-          </div>
-          {likelihoodDefinition || impactDefinition ? (
-            <div className="rounded-2xl bg-slate-50 px-4 py-4 text-sm text-on-surface-variant">
-              {likelihoodDefinition ? (
-                <p>
-                  <span className="font-semibold text-on-surface">Likelihood {likelihoodDefinition.value} - {likelihoodDefinition.label}:</span>{' '}
-                  {likelihoodDefinition.description}
-                </p>
-              ) : null}
-              {impactDefinition ? (
-                <p className={likelihoodDefinition ? 'mt-3' : ''}>
-                  <span className="font-semibold text-on-surface">Impact {impactDefinition.value} - {impactDefinition.label}:</span>{' '}
-                  {impactDefinition.description}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-          {showScoringGuide ? (
-            <ScoringGuidePanel
-              impactDefinitions={scoringModel.impact}
-              likelihoodDefinitions={scoringModel.likelihood}
-            />
-          ) : null}
           <RiskStatementField
             consequenceLabel="Consequence"
             consequenceValue={draftNarrative.consequence}
@@ -4339,65 +4367,6 @@ function SeverityBreakdownChart({
             <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">{bar.label}</div>
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-function ScoringGuideButton({open, onClick}: {open: boolean; onClick: () => void}) {
-  return (
-    <button
-      className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary ring-1 ring-primary/15 transition hover:bg-primary/5"
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onClick();
-      }}
-      type="button"
-    >
-      <span className="material-symbols-outlined text-[14px]">info</span>
-      {open ? 'Hide Guide' : 'Scoring Guide'}
-    </button>
-  );
-}
-
-function ScoringGuidePanel({
-  likelihoodDefinitions,
-  impactDefinitions,
-}: {
-  likelihoodDefinitions: ScoreDefinition[];
-  impactDefinitions: ScoreDefinition[];
-}) {
-  return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_10px_24px_rgba(42,52,57,0.04)]">
-      <div className="mb-4 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Current Scoring Guide</div>
-      <div className="grid gap-4 xl:grid-cols-2">
-        <div>
-          <div className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Likelihood</div>
-          <div className="space-y-2">
-            {likelihoodDefinitions.map((definition) => (
-              <div key={`likelihood-${definition.value}`} className="rounded-2xl bg-slate-50 px-4 py-3">
-                <div className="text-sm font-semibold text-on-surface">
-                  {definition.value} - {definition.label}
-                </div>
-                <div className="mt-1 text-xs leading-relaxed text-on-surface-variant">{definition.description}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div>
-          <div className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Impact</div>
-          <div className="space-y-2">
-            {impactDefinitions.map((definition) => (
-              <div key={`impact-${definition.value}`} className="rounded-2xl bg-slate-50 px-4 py-3">
-                <div className="text-sm font-semibold text-on-surface">
-                  {definition.value} - {definition.label}
-                </div>
-                <div className="mt-1 text-xs leading-relaxed text-on-surface-variant">{definition.description}</div>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   );
