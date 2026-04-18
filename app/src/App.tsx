@@ -1,12 +1,13 @@
 import {type ChangeEvent, type ReactNode, useEffect, useRef, useState} from 'react';
 
-type View = 'risk' | 'decision' | 'snapshot' | 'settings';
+type View = 'risk' | 'decision' | 'library' | 'snapshot' | 'settings';
 
 type RiskStatus = 'Pending' | 'Active' | 'Monitoring' | 'Rejected' | 'Closed';
 type RiskSeverity = 'High' | 'Medium' | 'Low';
 
 type Risk = {
   id: string;
+  sharedRiskId?: string;
   title: string;
   statement: string;
   trigger: string;
@@ -18,7 +19,6 @@ type Risk = {
   likelihood: number;
   impact: number;
   residualRating: string;
-  category: string;
   responseType: 'Mitigate' | 'Accept' | 'Transfer' | 'Avoid';
   project: string;
   lastUpdated: string;
@@ -37,6 +37,7 @@ type DecisionStatus = 'Approved' | 'Implemented' | 'Proposed' | 'Deferred' | 'Re
 
 type Decision = {
   id: string;
+  sharedDecisionId?: string;
   title: string;
   summary: string;
   status: DecisionStatus;
@@ -57,6 +58,10 @@ type ScoreDefinition = {
   value: number;
   label: string;
   description: string;
+  scheduleMinMonths?: number | null;
+  scheduleMaxMonths?: number | null;
+  costMinAmount?: number | null;
+  costMaxAmount?: number | null;
 };
 
 type RiskScoringModel = {
@@ -68,6 +73,37 @@ type SelectOption = {
   value: string;
   label: string;
   description?: string;
+};
+
+type SharedRisk = {
+  id: string;
+  title: string;
+  statement: string;
+  trigger: string;
+  consequence: string;
+  sourceImpactScore: number;
+  sharedImpactProfile?: {
+    basis: 'schedule' | 'cost';
+    min: number;
+    max: number | null;
+    sourceScore: number;
+  };
+  updatedAt: string;
+  sourceProjectId: string;
+};
+
+type SharedDecision = {
+  id: string;
+  title: string;
+  context: string;
+  decisionDrivers: string[];
+  consideredOptions: string[];
+  outcome: string;
+  goodConsequences: string[];
+  badConsequences: string[];
+  moreInfo: string;
+  updatedAt: string;
+  sourceProjectId: string;
 };
 
 type Project = {
@@ -85,11 +121,17 @@ type AppSnapshot = {
   exportedAt: string;
   activeProjectId: string;
   projects: Project[];
+  sharedLibrary?: {
+    risks: SharedRisk[];
+    decisions: SharedDecision[];
+  };
 };
 
 const RISK_SCORING_STORAGE_KEY = 'risk-decision-register.scoring-model.v1';
 const PROJECTS_STORAGE_KEY = 'risk-decision-register.projects.v1';
 const ACTIVE_PROJECT_ID_KEY = 'risk-decision-register.active-project.v1';
+const SHARED_RISKS_STORAGE_KEY = 'risk-decision-register.shared-risks.v1';
+const SHARED_DECISIONS_STORAGE_KEY = 'risk-decision-register.shared-decisions.v1';
 const APP_SNAPSHOT_VERSION = '1';
 
 function createBlankProject(overrides?: Partial<Project>): Project {
@@ -140,7 +182,6 @@ type QuickEditFieldName =
   | 'dueDate'
   | 'status'
   | 'linkedDecision'
-  | 'category'
   | 'responseType'
   | 'likelihood'
   | 'impact';
@@ -201,6 +242,111 @@ function normalizeRiskStatement(value: string) {
   }
 
   return `IF ${trimmed.replace(/^IF\s+/i, '')}, THEN consequence to be defined.`;
+}
+
+function parseOptionalNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function getRepresentativeRangeValue(min: number | null | undefined, max: number | null | undefined) {
+  if (min != null && max != null) {
+    return (min + max) / 2;
+  }
+
+  if (min != null) {
+    return min;
+  }
+
+  if (max != null) {
+    return max;
+  }
+
+  return null;
+}
+
+function rangeContainsValue(
+  min: number | null | undefined,
+  max: number | null | undefined,
+  value: number | null,
+) {
+  if (value == null) {
+    return false;
+  }
+
+  if (min != null && value < min) {
+    return false;
+  }
+
+  if (max != null && value > max) {
+    return false;
+  }
+
+  return true;
+}
+
+function formatImpactRange(min: number | null | undefined, max: number | null | undefined, unit: string, prefix = '') {
+  if (min == null && max == null) {
+    return '';
+  }
+
+  const formatValue = (value: number) => {
+    if (prefix) {
+      return `${prefix}${new Intl.NumberFormat('en-US', {maximumFractionDigits: 2}).format(value)}`;
+    }
+
+    return `${new Intl.NumberFormat('en-US', {maximumFractionDigits: 2}).format(value)} ${unit}`;
+  };
+
+  if (min != null && max != null) {
+    return `${formatValue(min)} to ${formatValue(max)}`;
+  }
+
+  if (min != null) {
+    return `${formatValue(min)}+`;
+  }
+
+  return `Up to ${formatValue(max ?? 0)}`;
+}
+
+function getImpactTranslationProfile(definition: ScoreDefinition) {
+  if (definition.scheduleMinMonths != null || definition.scheduleMaxMonths != null) {
+    return {
+      basis: 'schedule' as const,
+      min: definition.scheduleMinMonths ?? 0,
+      max: definition.scheduleMaxMonths ?? null,
+      sourceScore: definition.value,
+    };
+  }
+
+  if (definition.costMinAmount != null || definition.costMaxAmount != null) {
+    return {
+      basis: 'cost' as const,
+      min: definition.costMinAmount ?? 0,
+      max: definition.costMaxAmount ?? null,
+      sourceScore: definition.value,
+    };
+  }
+
+  return null;
+}
+
+function mapSharedImpactProfileToLocalScore(definitions: ScoreDefinition[], profile: SharedRisk['sharedImpactProfile']) {
+  if (!profile) {
+    return null;
+  }
+
+  const representativeValue = getRepresentativeRangeValue(profile.min, profile.max);
+  if (representativeValue == null) {
+    return null;
+  }
+
+  const candidate = definitions.find((definition) => {
+    const min = profile.basis === 'schedule' ? definition.scheduleMinMonths : definition.costMinAmount;
+    const max = profile.basis === 'schedule' ? definition.scheduleMaxMonths : definition.costMaxAmount;
+    return rangeContainsValue(min, max, representativeValue);
+  });
+
+  return candidate?.value ?? null;
 }
 
 function buildRiskStatement(trigger: string, consequence: string, _resultingIn?: string) {
@@ -457,6 +603,90 @@ function formatDecisionSequence(sequence: number) {
   return `DEC-${String(sequence).padStart(3, '0')}`;
 }
 
+function parseSharedRiskSequence(id: string) {
+  const match = id.trim().match(/^SRK-(\d+)$/i);
+  return match ? Number(match[1]) : null;
+}
+
+function formatSharedRiskSequence(sequence: number) {
+  return `SRK-${String(sequence).padStart(3, '0')}`;
+}
+
+function parseSharedDecisionSequence(id: string) {
+  const match = id.trim().match(/^SDC-(\d+)$/i);
+  return match ? Number(match[1]) : null;
+}
+
+function formatSharedDecisionSequence(sequence: number) {
+  return `SDC-${String(sequence).padStart(3, '0')}`;
+}
+
+function normalizeRiskRecord(input: Partial<Risk> & Record<string, unknown>): Risk {
+  const likelihood = typeof input.likelihood === 'number' ? input.likelihood : 3;
+  const impact = typeof input.impact === 'number' ? input.impact : 3;
+  const residual = getResidualRating(likelihood, impact);
+  const trigger = typeof input.trigger === 'string' ? input.trigger : '';
+  const consequence = typeof input.consequence === 'string' ? input.consequence : '';
+
+  return {
+    id: typeof input.id === 'string' ? input.id : formatRiskSequence(1),
+    sharedRiskId: typeof input.sharedRiskId === 'string' ? input.sharedRiskId : undefined,
+    title: typeof input.title === 'string' ? input.title : 'Untitled Risk',
+    statement:
+      typeof input.statement === 'string' && input.statement.trim()
+        ? normalizeRiskStatement(input.statement)
+        : buildRiskStatement(trigger, consequence),
+    trigger,
+    consequence,
+    resultingIn: typeof input.resultingIn === 'string' ? input.resultingIn : '',
+    status:
+      input.status === 'Pending' ||
+      input.status === 'Active' ||
+      input.status === 'Monitoring' ||
+      input.status === 'Rejected' ||
+      input.status === 'Closed'
+        ? input.status
+        : 'Pending',
+    severity:
+      input.severity === 'High' || input.severity === 'Medium' || input.severity === 'Low'
+        ? input.severity
+        : residual.severity,
+    owner: typeof input.owner === 'string' ? input.owner : '',
+    likelihood,
+    impact,
+    residualRating: typeof input.residualRating === 'string' ? input.residualRating : residual.label,
+    responseType:
+      input.responseType === 'Mitigate' ||
+      input.responseType === 'Accept' ||
+      input.responseType === 'Transfer' ||
+      input.responseType === 'Avoid'
+        ? input.responseType
+        : 'Mitigate',
+    project: typeof input.project === 'string' ? input.project : '',
+    lastUpdated: typeof input.lastUpdated === 'string' ? input.lastUpdated : 'Just now',
+    dueDate: typeof input.dueDate === 'string' ? input.dueDate : '',
+    mitigation: typeof input.mitigation === 'string' ? input.mitigation : '',
+    contingency: typeof input.contingency === 'string' ? input.contingency : '',
+    linkedDecision: typeof input.linkedDecision === 'string' ? input.linkedDecision : 'None',
+    attachments: typeof input.attachments === 'number' ? input.attachments : 0,
+    comments: typeof input.comments === 'number' ? input.comments : 0,
+    createdBy: typeof input.createdBy === 'string' ? input.createdBy : 'Local edit',
+    internalOnly: typeof input.internalOnly === 'boolean' ? input.internalOnly : false,
+    history: Array.isArray(input.history)
+      ? input.history
+          .map((entry) =>
+            entry && typeof entry === 'object'
+              ? {
+                  label: typeof entry.label === 'string' ? entry.label : 'Updated',
+                  meta: typeof entry.meta === 'string' ? entry.meta : 'Local edit',
+                }
+              : null,
+          )
+          .filter((entry): entry is {label: string; meta: string} => entry != null)
+      : [],
+  };
+}
+
 function normalizeDecisionRecord(input: Partial<Decision> & Record<string, unknown>): Decision {
   const linkedRisks = Array.isArray(input.linkedRisks)
     ? input.linkedRisks.filter((item): item is string => typeof item === 'string')
@@ -467,6 +697,7 @@ function normalizeDecisionRecord(input: Partial<Decision> & Record<string, unkno
 
   return {
     id: typeof input.id === 'string' ? input.id : formatDecisionSequence(1),
+    sharedDecisionId: typeof input.sharedDecisionId === 'string' ? input.sharedDecisionId : undefined,
     title: typeof input.title === 'string' ? input.title : 'Untitled Decision',
     summary: typeof input.summary === 'string' ? input.summary : '',
     status:
@@ -511,29 +742,127 @@ function normalizeDecisionRecord(input: Partial<Decision> & Record<string, unkno
   };
 }
 
+function normalizeScoringModel(model: RiskScoringModel | undefined) {
+  if (!model) {
+    return defaultRiskScoringModel;
+  }
+
+  return {
+    likelihood: defaultRiskScoringModel.likelihood.map((defaultEntry, index) => {
+      const entry = model.likelihood?.[index];
+      return {
+        value: index + 1,
+        label: entry?.label ?? defaultEntry.label,
+        description: entry?.description ?? defaultEntry.description,
+        scheduleMinMonths: parseOptionalNumber(entry?.scheduleMinMonths),
+        scheduleMaxMonths: parseOptionalNumber(entry?.scheduleMaxMonths),
+        costMinAmount: parseOptionalNumber(entry?.costMinAmount),
+        costMaxAmount: parseOptionalNumber(entry?.costMaxAmount),
+      };
+    }),
+    impact: defaultRiskScoringModel.impact.map((defaultEntry, index) => {
+      const entry = model.impact?.[index];
+      return {
+        value: index + 1,
+        label: entry?.label ?? defaultEntry.label,
+        description: entry?.description ?? defaultEntry.description,
+        scheduleMinMonths: parseOptionalNumber(entry?.scheduleMinMonths),
+        scheduleMaxMonths: parseOptionalNumber(entry?.scheduleMaxMonths),
+        costMinAmount: parseOptionalNumber(entry?.costMinAmount),
+        costMaxAmount: parseOptionalNumber(entry?.costMaxAmount),
+      };
+    }),
+  };
+}
+
+function normalizeSharedRiskRecord(input: Partial<SharedRisk> & Record<string, unknown>): SharedRisk {
+  const trigger = typeof input.trigger === 'string' ? input.trigger : '';
+  const consequence = typeof input.consequence === 'string' ? input.consequence : '';
+  return {
+    id: typeof input.id === 'string' ? input.id : formatSharedRiskSequence(1),
+    title: typeof input.title === 'string' ? input.title : 'Untitled Shared Risk',
+    statement:
+      typeof input.statement === 'string' && input.statement.trim()
+        ? normalizeRiskStatement(input.statement)
+        : buildRiskStatement(trigger, consequence),
+    trigger,
+    consequence,
+    sourceImpactScore: typeof input.sourceImpactScore === 'number' ? input.sourceImpactScore : 3,
+    sharedImpactProfile:
+      input.sharedImpactProfile &&
+      typeof input.sharedImpactProfile === 'object' &&
+      (input.sharedImpactProfile.basis === 'schedule' || input.sharedImpactProfile.basis === 'cost') &&
+      typeof input.sharedImpactProfile.sourceScore === 'number'
+        ? {
+            basis: input.sharedImpactProfile.basis,
+            min: typeof input.sharedImpactProfile.min === 'number' ? input.sharedImpactProfile.min : 0,
+            max: parseOptionalNumber(input.sharedImpactProfile.max),
+            sourceScore: input.sharedImpactProfile.sourceScore,
+          }
+        : undefined,
+    updatedAt: typeof input.updatedAt === 'string' ? input.updatedAt : new Date().toISOString(),
+    sourceProjectId: typeof input.sourceProjectId === 'string' ? input.sourceProjectId : '',
+  };
+}
+
+function normalizeSharedDecisionRecord(input: Partial<SharedDecision> & Record<string, unknown>): SharedDecision {
+  return {
+    id: typeof input.id === 'string' ? input.id : formatSharedDecisionSequence(1),
+    title: typeof input.title === 'string' ? input.title : 'Untitled Shared Decision',
+    context: typeof input.context === 'string' ? input.context : '',
+    decisionDrivers: Array.isArray(input.decisionDrivers)
+      ? input.decisionDrivers.filter((item): item is string => typeof item === 'string')
+      : [],
+    consideredOptions: Array.isArray(input.consideredOptions)
+      ? input.consideredOptions.filter((item): item is string => typeof item === 'string')
+      : [],
+    outcome: typeof input.outcome === 'string' ? input.outcome : '',
+    goodConsequences: Array.isArray(input.goodConsequences)
+      ? input.goodConsequences.filter((item): item is string => typeof item === 'string')
+      : [],
+    badConsequences: Array.isArray(input.badConsequences)
+      ? input.badConsequences.filter((item): item is string => typeof item === 'string')
+      : [],
+    moreInfo: typeof input.moreInfo === 'string' ? input.moreInfo : '',
+    updatedAt: typeof input.updatedAt === 'string' ? input.updatedAt : new Date().toISOString(),
+    sourceProjectId: typeof input.sourceProjectId === 'string' ? input.sourceProjectId : '',
+  };
+}
+
 function normalizeProjectRecord(input: Project): Project {
   return {
     ...input,
-    risks: Array.isArray(input.risks) ? input.risks : [],
+    risks: Array.isArray(input.risks)
+      ? input.risks.map((risk) => normalizeRiskRecord(risk as Partial<Risk> & Record<string, unknown>))
+      : [],
     decisions: Array.isArray(input.decisions)
       ? input.decisions.map((decision) =>
           normalizeDecisionRecord(decision as Partial<Decision> & Record<string, unknown>),
         )
       : [],
-    scoringModel: input.scoringModel ?? defaultRiskScoringModel,
+    scoringModel: normalizeScoringModel(input.scoringModel),
   };
 }
 
-function buildAppSnapshot(projects: Project[], activeProjectId: string): AppSnapshot {
+function buildAppSnapshot(
+  projects: Project[],
+  activeProjectId: string,
+  sharedRisks: SharedRisk[],
+  sharedDecisions: SharedDecision[],
+): AppSnapshot {
   return {
     version: APP_SNAPSHOT_VERSION,
     exportedAt: new Date().toISOString(),
     activeProjectId,
     projects,
+    sharedLibrary: {
+      risks: sharedRisks,
+      decisions: sharedDecisions,
+    },
   };
 }
 
-function parseAppSnapshot(source: string): AppSnapshot {
+function parseAppSnapshot(source: string): AppSnapshot & {sharedLibrary: {risks: SharedRisk[]; decisions: SharedDecision[]}} {
   let parsed: unknown;
 
   try {
@@ -562,6 +891,20 @@ function parseAppSnapshot(source: string): AppSnapshot {
     exportedAt: typeof raw.exportedAt === 'string' ? raw.exportedAt : new Date().toISOString(),
     activeProjectId,
     projects,
+    sharedLibrary: {
+      risks:
+        raw.sharedLibrary && typeof raw.sharedLibrary === 'object' && Array.isArray(raw.sharedLibrary.risks)
+          ? raw.sharedLibrary.risks.map((risk) =>
+              normalizeSharedRiskRecord(risk as Partial<SharedRisk> & Record<string, unknown>),
+            )
+          : [],
+      decisions:
+        raw.sharedLibrary && typeof raw.sharedLibrary === 'object' && Array.isArray(raw.sharedLibrary.decisions)
+          ? raw.sharedLibrary.decisions.map((decision) =>
+              normalizeSharedDecisionRecord(decision as Partial<SharedDecision> & Record<string, unknown>),
+            )
+          : [],
+    },
   };
 }
 
@@ -639,15 +982,51 @@ function loadRiskScoringModel() {
         value: index + 1,
         label: entry.label ?? defaultRiskScoringModel.likelihood[index].label,
         description: entry.description ?? defaultRiskScoringModel.likelihood[index].description,
+        scheduleMinMonths: parseOptionalNumber(entry.scheduleMinMonths),
+        scheduleMaxMonths: parseOptionalNumber(entry.scheduleMaxMonths),
+        costMinAmount: parseOptionalNumber(entry.costMinAmount),
+        costMaxAmount: parseOptionalNumber(entry.costMaxAmount),
       })),
       impact: parsed.impact.map((entry, index) => ({
         value: index + 1,
         label: entry.label ?? defaultRiskScoringModel.impact[index].label,
         description: entry.description ?? defaultRiskScoringModel.impact[index].description,
+        scheduleMinMonths: parseOptionalNumber(entry.scheduleMinMonths),
+        scheduleMaxMonths: parseOptionalNumber(entry.scheduleMaxMonths),
+        costMinAmount: parseOptionalNumber(entry.costMinAmount),
+        costMaxAmount: parseOptionalNumber(entry.costMaxAmount),
       })),
     };
   } catch {
     return defaultRiskScoringModel;
+  }
+}
+
+function loadSharedRisks() {
+  if (typeof window === 'undefined') return [] as SharedRisk[];
+  try {
+    const stored = window.localStorage.getItem(SHARED_RISKS_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored) as SharedRisk[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((risk) => normalizeSharedRiskRecord(risk as Partial<SharedRisk> & Record<string, unknown>));
+  } catch {
+    return [];
+  }
+}
+
+function loadSharedDecisions() {
+  if (typeof window === 'undefined') return [] as SharedDecision[];
+  try {
+    const stored = window.localStorage.getItem(SHARED_DECISIONS_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored) as SharedDecision[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((decision) =>
+      normalizeSharedDecisionRecord(decision as Partial<SharedDecision> & Record<string, unknown>),
+    );
+  } catch {
+    return [];
   }
 }
 
@@ -679,12 +1058,44 @@ function getScoreDefinition(definitions: ScoreDefinition[], value: number) {
   return definitions.find((definition) => definition.value === value);
 }
 
+function scoringModelsMatch(left: RiskScoringModel, right: RiskScoringModel) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function toScoreSelectOptions(definitions: ScoreDefinition[]): SelectOption[] {
   return definitions.map((definition) => ({
     value: String(definition.value),
     label: `${definition.value} - ${definition.label}`,
-    description: definition.description,
+    description: [
+      definition.description,
+      definition.scheduleMinMonths != null || definition.scheduleMaxMonths != null
+        ? `Schedule Impact: ${formatImpactRange(definition.scheduleMinMonths, definition.scheduleMaxMonths, 'months')}`
+        : '',
+      definition.costMinAmount != null || definition.costMaxAmount != null
+        ? `Cost Impact: ${formatImpactRange(definition.costMinAmount, definition.costMaxAmount, '', '$')}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
   }));
+}
+
+function renderSelectDescription(description: string) {
+  return description.split('\n').filter(Boolean).map((line, index) => {
+    const separatorIndex = line.indexOf(':');
+    if (separatorIndex > 0) {
+      const label = line.slice(0, separatorIndex);
+      const remainder = line.slice(separatorIndex + 1).trim();
+      return (
+        <div key={`${line}-${index}`}>
+          <strong className="font-semibold text-on-surface">{label}:</strong>{' '}
+          <span>{remainder}</span>
+        </div>
+      );
+    }
+
+    return <div key={`${line}-${index}`}>{line}</div>;
+  });
 }
 
 function normalizeOptions(options: string[] | SelectOption[]): SelectOption[] {
@@ -700,6 +1111,8 @@ function normalizeOptions(options: string[] | SelectOption[]): SelectOption[] {
 
 export default function App() {
   const [projects, setProjects] = useState<Project[]>(() => loadProjects());
+  const [sharedRisks, setSharedRisks] = useState<SharedRisk[]>(() => loadSharedRisks());
+  const [sharedDecisions, setSharedDecisions] = useState<SharedDecision[]>(() => loadSharedDecisions());
   const [activeProjectId, setActiveProjectId] = useState<string>(() => {
     const loadedProjects = loadProjects();
     return loadActiveProjectId(loadedProjects);
@@ -723,6 +1136,10 @@ export default function App() {
   const nextDecisionSequence =
     decisions.reduce((highest, d) => Math.max(highest, parseDecisionSequence(d.id) ?? 0), 0) +
     1;
+  const nextSharedRiskSequence =
+    sharedRisks.reduce((highest, risk) => Math.max(highest, parseSharedRiskSequence(risk.id) ?? 0), 0) + 1;
+  const nextSharedDecisionSequence =
+    sharedDecisions.reduce((highest, decision) => Math.max(highest, parseSharedDecisionSequence(decision.id) ?? 0), 0) + 1;
 
   const selectedRisk = riskRecords.find((risk) => risk.id === selectedRiskId) ?? riskRecords[0] ?? null;
   const selectedDecision = decisions.find((d) => d.id === selectedDecisionId) ?? decisions[0] ?? null;
@@ -734,6 +1151,14 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(ACTIVE_PROJECT_ID_KEY, activeProjectId);
   }, [activeProjectId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SHARED_RISKS_STORAGE_KEY, JSON.stringify(sharedRisks));
+  }, [sharedRisks]);
+
+  useEffect(() => {
+    window.localStorage.setItem(SHARED_DECISIONS_STORAGE_KEY, JSON.stringify(sharedDecisions));
+  }, [sharedDecisions]);
 
   function updateActiveProject(updater: (project: Project) => Project) {
     setProjects((prev) => prev.map((p) => (p.id === activeProjectId ? updater(p) : p)));
@@ -833,6 +1258,69 @@ export default function App() {
     }));
   }
 
+  function handleSyncSharedRiskDescription(
+    riskId: string,
+    updates: Pick<Risk, 'trigger' | 'consequence' | 'statement'>,
+    historyLabel: string,
+  ) {
+    const localRisk = riskRecords.find((risk) => risk.id === riskId);
+    if (!localRisk?.sharedRiskId) {
+      handleUpdateRisk(riskId, updates, historyLabel);
+      return;
+    }
+
+    const syncedStatement = normalizeRiskStatement(
+      updates.statement || buildRiskStatement(updates.trigger, updates.consequence),
+    );
+    const syncedTrigger = updates.trigger.trim();
+    const syncedConsequence = updates.consequence.trim();
+    const sharedRiskId = localRisk.sharedRiskId;
+    const updatedSharedRisk: SharedRisk = {
+      id: sharedRiskId,
+      title: localRisk.title,
+      statement: syncedStatement,
+      trigger: syncedTrigger,
+      consequence: syncedConsequence,
+      sourceImpactScore: localRisk.impact,
+      sharedImpactProfile: getImpactTranslationProfile(
+        getScoreDefinition(activeProject.scoringModel.impact, localRisk.impact) ??
+          activeProject.scoringModel.impact[localRisk.impact - 1],
+      ) ?? undefined,
+      updatedAt: new Date().toISOString(),
+      sourceProjectId: activeProject.id,
+    };
+
+    setSharedRisks((current) =>
+      current.map((sharedRisk) => (sharedRisk.id === sharedRiskId ? updatedSharedRisk : sharedRisk)),
+    );
+    setProjects((current) =>
+      current.map((project) => ({
+        ...project,
+        risks: project.risks.map((risk) =>
+          risk.sharedRiskId === sharedRiskId
+            ? {
+                ...risk,
+                statement: syncedStatement,
+                trigger: syncedTrigger,
+                consequence: syncedConsequence,
+                lastUpdated: 'Just now',
+                history: [
+                  {
+                    label:
+                      project.id === activeProject.id && risk.id === riskId
+                        ? `${historyLabel} and synchronized to shared library`
+                        : `Synchronized from shared risk ${sharedRiskId}`,
+                    meta: 'Local edit • Just now',
+                  },
+                  ...risk.history,
+                ],
+              }
+            : risk,
+        ),
+      })),
+    );
+  }
+
   function handleDeleteRisk(riskId: string) {
     updateActiveProject((project) => {
       const remainingRisks = project.risks.filter((risk) => risk.id !== riskId);
@@ -844,6 +1332,108 @@ export default function App() {
       }
       return {...project, risks: remainingRisks};
     });
+  }
+
+  function handleShareRisk(riskId: string) {
+    const localRisk = riskRecords.find((risk) => risk.id === riskId);
+    if (!localRisk) {
+      return;
+    }
+
+    if (localRisk.sharedRiskId) {
+      setView('library');
+      return;
+    }
+
+    const sharedRiskId = formatSharedRiskSequence(nextSharedRiskSequence);
+    const sharedRisk: SharedRisk = {
+      id: sharedRiskId,
+      title: localRisk.title,
+      statement: localRisk.statement,
+      trigger: localRisk.trigger,
+      consequence: localRisk.consequence,
+      sourceImpactScore: localRisk.impact,
+      sharedImpactProfile: getImpactTranslationProfile(
+        getScoreDefinition(activeProject.scoringModel.impact, localRisk.impact) ?? activeProject.scoringModel.impact[localRisk.impact - 1],
+      ) ?? undefined,
+      updatedAt: new Date().toISOString(),
+      sourceProjectId: activeProject.id,
+    };
+
+    setSharedRisks((current) => [sharedRisk, ...current]);
+    updateActiveProject((project) => ({
+      ...project,
+      risks: project.risks.map((risk) =>
+        risk.id === riskId
+          ? {
+              ...risk,
+              sharedRiskId,
+              history: [{label: 'Added to shared library', meta: 'Local edit • Just now'}, ...risk.history],
+            }
+          : risk,
+      ),
+    }));
+  }
+
+  function handleAddSharedRiskToActiveProject(sharedRiskId: string) {
+    const sharedRisk = sharedRisks.find((risk) => risk.id === sharedRiskId);
+    if (!sharedRisk) {
+      return;
+    }
+
+    const alreadyLinked = riskRecords.some((risk) => risk.sharedRiskId === sharedRiskId);
+    if (alreadyLinked) {
+      setView('risk');
+      return;
+    }
+
+    const translatedImpact =
+      mapSharedImpactProfileToLocalScore(activeProject.scoringModel.impact, sharedRisk.sharedImpactProfile) ??
+      sharedRisk.sourceImpactScore;
+    const residual = getResidualRating(3, translatedImpact);
+    const nextRisk: Risk = {
+      id: formatRiskSequence(nextRiskSequence),
+      sharedRiskId,
+      title: sharedRisk.title,
+      statement: sharedRisk.statement,
+      trigger: sharedRisk.trigger,
+      consequence: sharedRisk.consequence,
+      resultingIn: '',
+      status: 'Pending',
+      severity: residual.severity,
+      owner: '',
+      likelihood: 3,
+      impact: translatedImpact,
+      residualRating: residual.label,
+      responseType: 'Mitigate',
+      project: activeProject.name,
+      lastUpdated: 'Just now',
+      dueDate: '',
+      mitigation: 'Define the mitigation plan for this shared risk in this project context.',
+      contingency: '',
+      linkedDecision: 'None',
+      attachments: 0,
+      comments: 0,
+      createdBy: 'Shared library import',
+      internalOnly: false,
+      history: [
+        {
+          label:
+            sharedRisk.sharedImpactProfile && translatedImpact !== sharedRisk.sharedImpactProfile.sourceScore
+              ? `Added from shared library (${sharedRisk.id}) and impact mapped to local score ${translatedImpact}`
+              : `Added from shared library (${sharedRisk.id})`,
+          meta: 'Local edit • Just now',
+        },
+      ],
+    };
+
+    updateActiveProject((project) => ({
+      ...project,
+      risks: [nextRisk, ...project.risks],
+    }));
+    setSelectedRiskId(nextRisk.id);
+    setView('risk');
+    setDrawerOpen(true);
   }
 
   function handleRenameRisk(riskId: string, nextRiskId: string) {
@@ -884,7 +1474,6 @@ export default function App() {
     id: string;
     title: string;
     owner: string;
-    category: string;
     linkedDecision: string;
     likelihood: number;
     impact: number;
@@ -908,7 +1497,6 @@ export default function App() {
       likelihood: input.likelihood,
       impact: input.impact,
       residualRating: residual.label,
-      category: input.category,
       responseType: input.responseType,
       project: activeProject.name,
       lastUpdated: 'Just now',
@@ -971,6 +1559,148 @@ export default function App() {
     setCreateDecisionOpen(false);
   }
 
+  function handleShareDecision(decisionId: string) {
+    const localDecision = decisions.find((decision) => decision.id === decisionId);
+    if (!localDecision) {
+      return;
+    }
+
+    if (localDecision.sharedDecisionId) {
+      setView('library');
+      return;
+    }
+
+    const sharedDecisionId = formatSharedDecisionSequence(nextSharedDecisionSequence);
+    const sharedDecision: SharedDecision = {
+      id: sharedDecisionId,
+      title: localDecision.title,
+      context: localDecision.context,
+      decisionDrivers: localDecision.decisionDrivers,
+      consideredOptions: localDecision.consideredOptions,
+      outcome: localDecision.outcome,
+      goodConsequences: localDecision.goodConsequences,
+      badConsequences: localDecision.badConsequences,
+      moreInfo: localDecision.moreInfo,
+      updatedAt: new Date().toISOString(),
+      sourceProjectId: activeProject.id,
+    };
+
+    setSharedDecisions((current) => [sharedDecision, ...current]);
+    updateActiveProject((project) => ({
+      ...project,
+      decisions: project.decisions.map((decision) =>
+        decision.id === decisionId ? {...decision, sharedDecisionId} : decision,
+      ),
+    }));
+  }
+
+  function handlePublishDecisionToLibrary(decisionId: string) {
+    const localDecision = decisions.find((decision) => decision.id === decisionId);
+    if (!localDecision?.sharedDecisionId) {
+      return;
+    }
+
+    const updatedSharedDecision: SharedDecision = {
+      id: localDecision.sharedDecisionId,
+      title: localDecision.title,
+      context: localDecision.context,
+      decisionDrivers: localDecision.decisionDrivers,
+      consideredOptions: localDecision.consideredOptions,
+      outcome: localDecision.outcome,
+      goodConsequences: localDecision.goodConsequences,
+      badConsequences: localDecision.badConsequences,
+      moreInfo: localDecision.moreInfo,
+      updatedAt: new Date().toISOString(),
+      sourceProjectId: activeProject.id,
+    };
+
+    setSharedDecisions((current) =>
+      current.map((decision) => (decision.id === updatedSharedDecision.id ? updatedSharedDecision : decision)),
+    );
+    setProjects((current) =>
+      current.map((project) => ({
+        ...project,
+        decisions: project.decisions.map((decision) =>
+          decision.sharedDecisionId === updatedSharedDecision.id
+            ? {
+                ...decision,
+                title: updatedSharedDecision.title,
+                context: updatedSharedDecision.context,
+                decisionDrivers: updatedSharedDecision.decisionDrivers,
+                consideredOptions: updatedSharedDecision.consideredOptions,
+                outcome: updatedSharedDecision.outcome,
+                goodConsequences: updatedSharedDecision.goodConsequences,
+                badConsequences: updatedSharedDecision.badConsequences,
+                moreInfo: updatedSharedDecision.moreInfo,
+              }
+            : decision,
+        ),
+      })),
+    );
+  }
+
+  function handleRefreshDecisionFromLibrary(decisionId: string) {
+    const localDecision = decisions.find((decision) => decision.id === decisionId);
+    if (!localDecision?.sharedDecisionId) {
+      return;
+    }
+
+    const sharedDecision = sharedDecisions.find((item) => item.id === localDecision.sharedDecisionId);
+    if (!sharedDecision) {
+      return;
+    }
+
+    handleUpdateDecision(decisionId, {
+      title: sharedDecision.title,
+      context: sharedDecision.context,
+      decisionDrivers: sharedDecision.decisionDrivers,
+      consideredOptions: sharedDecision.consideredOptions,
+      outcome: sharedDecision.outcome,
+      goodConsequences: sharedDecision.goodConsequences,
+      badConsequences: sharedDecision.badConsequences,
+      moreInfo: sharedDecision.moreInfo,
+    });
+  }
+
+  function handleAddSharedDecisionToActiveProject(sharedDecisionId: string) {
+    const sharedDecision = sharedDecisions.find((decision) => decision.id === sharedDecisionId);
+    if (!sharedDecision) {
+      return;
+    }
+
+    const alreadyLinked = decisions.some((decision) => decision.sharedDecisionId === sharedDecisionId);
+    if (alreadyLinked) {
+      setView('decision');
+      return;
+    }
+
+    const next: Decision = {
+      id: formatDecisionSequence(nextDecisionSequence),
+      sharedDecisionId,
+      title: sharedDecision.title,
+      summary: '',
+      status: 'Proposed',
+      deciders: '',
+      date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
+      linkedRisks: [],
+      context: sharedDecision.context,
+      decisionDrivers: sharedDecision.decisionDrivers,
+      consideredOptions: sharedDecision.consideredOptions,
+      outcome: sharedDecision.outcome,
+      goodConsequences: sharedDecision.goodConsequences,
+      badConsequences: sharedDecision.badConsequences,
+      moreInfo: sharedDecision.moreInfo,
+      approvalChain: [],
+    };
+
+    updateActiveProject((project) => ({
+      ...project,
+      decisions: [next, ...project.decisions],
+    }));
+    setSelectedDecisionId(next.id);
+    setView('decision');
+  }
+
   function handleUpdateDecision(decisionId: string, updates: Partial<Decision>) {
     updateActiveProject((project) => ({
       ...project,
@@ -991,7 +1721,7 @@ export default function App() {
   }
 
   function handleExportSnapshot() {
-    const snapshot = buildAppSnapshot(projects, activeProjectId);
+    const snapshot = buildAppSnapshot(projects, activeProjectId, sharedRisks, sharedDecisions);
     const json = JSON.stringify(snapshot, null, 2);
     const blob = new Blob([json], {type: 'application/json'});
     const url = window.URL.createObjectURL(blob);
@@ -1011,6 +1741,8 @@ export default function App() {
       snapshot.projects.find((project) => project.id === snapshot.activeProjectId) ?? snapshot.projects[0];
 
     setProjects(snapshot.projects);
+    setSharedRisks(snapshot.sharedLibrary.risks);
+    setSharedDecisions(snapshot.sharedLibrary.decisions);
     setActiveProjectId(nextActiveProject.id);
     setSelectedRiskId(nextActiveProject.risks[0]?.id ?? '');
     setSelectedDecisionId(nextActiveProject.decisions[0]?.id ?? '');
@@ -1066,6 +1798,21 @@ export default function App() {
                   setView('risk');
                   setDrawerOpen(true);
                 }}
+                onShareDecision={handleShareDecision}
+                onPublishSharedDecision={handlePublishDecisionToLibrary}
+                onRefreshFromSharedDecision={handleRefreshDecisionFromLibrary}
+                sharedDecisions={sharedDecisions}
+                projects={projects}
+                activeProjectId={activeProject.id}
+              />
+            ) : view === 'library' ? (
+              <SharedLibraryPage
+                activeProject={activeProject}
+                projects={projects}
+                sharedRisks={sharedRisks}
+                sharedDecisions={sharedDecisions}
+                onAddSharedRiskToProject={handleAddSharedRiskToActiveProject}
+                onAddSharedDecisionToProject={handleAddSharedDecisionToActiveProject}
               />
             ) : view === 'snapshot' ? (
               <SnapshotPage
@@ -1094,9 +1841,13 @@ export default function App() {
               onUpdateRisk={handleUpdateRisk}
               existingIds={usedRiskIds}
               ownerOptions={Array.from(new Set<string>(riskRecords.map((risk) => risk.owner)))}
-              categoryOptions={Array.from(new Set<string>(riskRecords.map((risk) => risk.category)))}
               linkedDecisionOptions={getDecisionSelectOptions(decisions)}
               decisions={decisions}
+              projects={projects}
+              sharedRisks={sharedRisks}
+              activeProjectId={activeProject.id}
+              onShareRisk={handleShareRisk}
+              onSyncSharedRiskDescription={handleSyncSharedRiskDescription}
             />
           ) : null}
           {view === 'risk' ? (
@@ -1106,7 +1857,6 @@ export default function App() {
               nextRiskId={formatRiskSequence(nextRiskSequence)}
               scoringModel={riskScoringModel}
               ownerOptions={Array.from(new Set<string>(riskRecords.map((risk) => risk.owner)))}
-              categoryOptions={Array.from(new Set<string>(riskRecords.map((risk) => risk.category)))}
               linkedDecisionOptions={getDecisionSelectOptions(decisions)}
               onClose={() => setCreateRiskOpen(false)}
               onCreate={handleCreateRisk}
@@ -1153,6 +1903,7 @@ function Sidebar({
   const navItems: {id: View; label: string; icon: string}[] = [
     {id: 'risk', label: 'Risk Register', icon: 'security'},
     {id: 'decision', label: 'Decision Register', icon: 'gavel'},
+    {id: 'library', label: 'Shared Library', icon: 'hub'},
     {id: 'snapshot', label: 'Import / Export', icon: 'import_export'},
     {id: 'settings', label: 'Settings', icon: 'tune'},
   ];
@@ -1439,6 +2190,8 @@ function TopNav({
               ? 'Operational View'
               : view === 'decision'
                 ? 'Decision Review'
+                : view === 'library'
+                  ? 'Cross-Project Library'
                 : view === 'snapshot'
                   ? 'Shared Snapshot Workflow'
                   : 'Configuration'}
@@ -1520,6 +2273,13 @@ function TopNav({
                 </div>
 
                 <div>
+                  <div className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Shared Library</div>
+                  <p>
+                    Promote risks and decisions into the shared library when they should be reused across projects. Scoring, owners, status, and response remain local to each project.
+                  </p>
+                </div>
+
+                <div>
                   <div className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Projects</div>
                   <p>
                     Use the project panel in the left rail to switch projects, create new ones, or delete old workspaces that are no longer needed.
@@ -1540,7 +2300,6 @@ function CreateRiskModal({
   nextRiskId,
   scoringModel,
   ownerOptions,
-  categoryOptions,
   linkedDecisionOptions,
   onClose,
   onCreate,
@@ -1550,14 +2309,12 @@ function CreateRiskModal({
   nextRiskId: string;
   scoringModel: RiskScoringModel;
   ownerOptions: string[];
-  categoryOptions: string[];
   linkedDecisionOptions: SelectOption[];
   onClose: () => void;
   onCreate: (input: {
     id: string;
     title: string;
     owner: string;
-    category: string;
     linkedDecision: string;
     likelihood: number;
     impact: number;
@@ -1573,7 +2330,6 @@ function CreateRiskModal({
     id: nextRiskId,
     title: '',
     owner: ownerOptions[0] ?? '',
-    category: categoryOptions[0] ?? 'Infrastructure',
     linkedDecision: 'None',
     likelihood: '3',
     impact: '3',
@@ -1589,7 +2345,6 @@ function CreateRiskModal({
       id: nextRiskId,
       title: '',
       owner: ownerOptions[0] ?? '',
-      category: categoryOptions[0] ?? 'Infrastructure',
       linkedDecision: 'None',
       likelihood: '3',
       impact: '3',
@@ -1886,7 +2641,6 @@ function CreateRiskModal({
                     id: form.id,
                     title: form.title,
                     owner: form.owner,
-                    category: form.category,
                     linkedDecision: form.linkedDecision,
                     likelihood: Number(form.likelihood),
                     impact: Number(form.impact),
@@ -1919,9 +2673,11 @@ function SettingsPage({
 }) {
   const [draftModel, setDraftModel] = useState(scoringModel);
   const [saved, setSaved] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
     setDraftModel(scoringModel);
+    setConfirmReset(false);
   }, [scoringModel]);
 
   useEffect(() => {
@@ -1933,14 +2689,24 @@ function SettingsPage({
     return () => window.clearTimeout(timeoutId);
   }, [saved]);
 
-  function updateDefinition(section: 'likelihood' | 'impact', value: number, field: 'label' | 'description', nextValue: string) {
+  function updateDefinition(
+    section: 'likelihood' | 'impact',
+    value: number,
+    field: 'label' | 'description' | 'scheduleMinMonths' | 'scheduleMaxMonths' | 'costMinAmount' | 'costMaxAmount',
+    nextValue: string,
+  ) {
     setDraftModel((current) => ({
       ...current,
       [section]: current[section].map((entry) =>
         entry.value === value
           ? {
               ...entry,
-              [field]: nextValue,
+              [field]:
+                field === 'label' || field === 'description'
+                  ? nextValue
+                  : nextValue.trim()
+                    ? Number(nextValue)
+                    : null,
             }
           : entry,
       ),
@@ -1958,25 +2724,57 @@ function SettingsPage({
             Maintain the official scoring rubric here. Risk creation and risk scoring views read these definitions directly so teams apply Likelihood and Impact consistently.
           </p>
         </div>
+      </div>
+
+      <div className="sticky top-16 z-20 mb-8 flex flex-wrap items-center justify-between gap-4 rounded-[1.5rem] border border-slate-200/70 bg-slate-50/95 px-5 py-4 shadow-[0_10px_24px_rgba(42,52,57,0.08)] backdrop-blur-xl">
+        <div className="text-sm leading-relaxed text-on-surface-variant">
+          Scoring model actions remain available while you review or edit the rubric below.
+        </div>
         <div className="flex items-center gap-3">
           {saved ? (
             <span className="rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-emerald-800">
               Saved
             </span>
           ) : null}
-          <button
-            className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-on-surface transition hover:bg-slate-200"
-            onClick={() => setDraftModel(scoringModel)}
-            type="button"
-          >
-            Reset
-          </button>
+          {confirmReset ? (
+            <>
+              <span className="text-xs font-semibold text-slate-500">Reset unsaved rubric changes?</span>
+              <button
+                className="rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700"
+                onClick={() => {
+                  setDraftModel(scoringModel);
+                  setConfirmReset(false);
+                  setSaved(false);
+                }}
+                type="button"
+              >
+                Confirm Reset
+              </button>
+              <button
+                className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-on-surface transition hover:bg-slate-200"
+                onClick={() => setConfirmReset(false)}
+                type="button"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-on-surface transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!isDirty}
+              onClick={() => setConfirmReset(true)}
+              type="button"
+            >
+              Reset
+            </button>
+          )}
           <button
             className="rounded-xl bg-gradient-to-br from-primary to-primary-dim px-4 py-2.5 text-sm font-bold text-on-primary shadow-lg shadow-primary/20 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             disabled={!isDirty}
             onClick={() => {
               onSaveScoringModel(draftModel);
               setSaved(true);
+              setConfirmReset(false);
             }}
             type="button"
           >
@@ -2000,15 +2798,234 @@ function SettingsPage({
           <ScoringDefinitionEditor
             definitions={draftModel.likelihood}
             onChange={(value, field, nextValue) => updateDefinition('likelihood', value, field, nextValue)}
+            showImpactRanges={false}
             title="Likelihood Definitions"
           />
           <ScoringDefinitionEditor
             definitions={draftModel.impact}
             onChange={(value, field, nextValue) => updateDefinition('impact', value, field, nextValue)}
+            showImpactRanges
             title="Impact Definitions"
           />
         </div>
       </section>
+    </div>
+  );
+}
+
+function SharedLibraryPage({
+  activeProject,
+  projects,
+  sharedRisks,
+  sharedDecisions,
+  onAddSharedRiskToProject,
+  onAddSharedDecisionToProject,
+}: {
+  activeProject: Project;
+  projects: Project[];
+  sharedRisks: SharedRisk[];
+  sharedDecisions: SharedDecision[];
+  onAddSharedRiskToProject: (sharedRiskId: string) => void;
+  onAddSharedDecisionToProject: (sharedDecisionId: string) => void;
+}) {
+  const riskUsages = sharedRisks.map((sharedRisk) => ({
+    sharedRisk,
+    usages: projects.flatMap((project) =>
+      project.risks
+        .filter((risk) => risk.sharedRiskId === sharedRisk.id)
+        .map((risk) => ({
+          projectId: project.id,
+          projectName: project.name,
+          risk,
+          scoringModelMatches: scoringModelsMatch(project.scoringModel, activeProject.scoringModel),
+        })),
+    ),
+  }));
+  const decisionUsages = sharedDecisions.map((sharedDecision) => ({
+    sharedDecision,
+    usages: projects.flatMap((project) =>
+      project.decisions
+        .filter((decision) => decision.sharedDecisionId === sharedDecision.id)
+        .map((decision) => ({
+          projectId: project.id,
+          projectName: project.name,
+          decision,
+        })),
+    ),
+  }));
+
+  return (
+    <div className="mx-auto w-full max-w-[1450px] px-8 py-8">
+      <div className="mb-8 flex items-end justify-between gap-6">
+        <div>
+          <h1 className="font-headline text-4xl font-extrabold tracking-tight text-on-surface">Shared Library</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-on-surface-variant">
+            Reuse common risks and decisions across projects while keeping scoring, status, ownership, response, and due dates local to each project.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-900">
+          Shared records carry the common description. Risk scores remain project-specific and may not be directly comparable when projects use different scoring models.
+        </div>
+      </div>
+
+      <div className="mb-6 grid gap-4 lg:grid-cols-3">
+        <SummaryMetricCard label="Shared Risks" tone="text-on-surface" value={String(sharedRisks.length)} />
+        <SummaryMetricCard label="Shared Decisions" tone="text-on-surface" value={String(sharedDecisions.length)} />
+        <SummaryMetricCard
+          label="Active Project"
+          tone="text-primary"
+          value={activeProject.name}
+        />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
+          <div className="mb-5 flex items-center gap-3">
+            <span className="material-symbols-outlined text-primary">warning</span>
+            <div>
+              <h2 className="font-headline text-2xl font-extrabold text-on-surface">Shared Risks</h2>
+              <p className="mt-1 text-sm text-on-surface-variant">
+                Promote a risk from a project drawer, then add it into other projects from here.
+              </p>
+            </div>
+          </div>
+          {riskUsages.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-sm leading-relaxed text-slate-500">
+              No shared risks yet. Open a risk drawer and use the share action to add it to the cross-project library.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {riskUsages.map(({sharedRisk, usages}) => {
+                const alreadyInActiveProject = usages.some((usage) => usage.projectId === activeProject.id);
+                const hasDifferentRubric = usages.some((usage) => !usage.scoringModelMatches);
+                const sharedImpactLabel = sharedRisk.sharedImpactProfile
+                  ? `${sharedRisk.sharedImpactProfile.basis === 'schedule' ? 'Schedule' : 'Cost'} basis: ${
+                      sharedRisk.sharedImpactProfile.basis === 'schedule'
+                        ? formatImpactRange(sharedRisk.sharedImpactProfile.min, sharedRisk.sharedImpactProfile.max, 'months')
+                        : formatImpactRange(sharedRisk.sharedImpactProfile.min, sharedRisk.sharedImpactProfile.max, '', '$')
+                    }`
+                  : null;
+                return (
+                  <div key={sharedRisk.id} className="rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="font-mono text-[11px] font-bold text-primary">{sharedRisk.id}</div>
+                        <h3 className="mt-1 text-lg font-extrabold text-on-surface">{sharedRisk.title}</h3>
+                        <p className="mt-2 text-sm leading-relaxed text-on-surface-variant">
+                          {renderStatementWithBoldKeywords(sharedRisk.statement)}
+                        </p>
+                      </div>
+                      <button
+                        className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-on-surface shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={alreadyInActiveProject}
+                        onClick={() => onAddSharedRiskToProject(sharedRisk.id)}
+                        type="button"
+                      >
+                        {alreadyInActiveProject ? 'Already In Project' : `Add To ${activeProject.name}`}
+                      </button>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+                        Used in {usages.length} project{usages.length === 1 ? '' : 's'}
+                      </span>
+                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+                        Source impact {sharedRisk.sourceImpactScore}
+                      </span>
+                      {sharedImpactLabel ? (
+                        <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+                          {sharedImpactLabel}
+                        </span>
+                      ) : null}
+                      {hasDifferentRubric ? (
+                        <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-amber-800">
+                          Different scoring rubrics in use
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="mt-4 space-y-2">
+                      {usages.map((usage) => (
+                        <div key={`${sharedRisk.id}-${usage.projectId}`} className="rounded-2xl bg-white px-4 py-3">
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="text-sm font-semibold text-on-surface">{usage.projectName}</div>
+                            <div className="text-xs text-on-surface-variant">
+                              Likelihood {usage.risk.likelihood} · Impact {usage.risk.impact} · {usage.risk.residualRating}
+                            </div>
+                          </div>
+                          <div className="mt-1 text-xs text-on-surface-variant">
+                            Status {usage.risk.status} · Owner {usage.risk.owner || 'Not assigned'} · Response {usage.risk.responseType}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
+          <div className="mb-5 flex items-center gap-3">
+            <span className="material-symbols-outlined text-primary">balance</span>
+            <div>
+              <h2 className="font-headline text-2xl font-extrabold text-on-surface">Shared Decisions</h2>
+              <p className="mt-1 text-sm text-on-surface-variant">
+                Reuse governance decisions across projects while keeping local status and linked risks in each project.
+              </p>
+            </div>
+          </div>
+          {decisionUsages.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-sm leading-relaxed text-slate-500">
+              No shared decisions yet. Open a decision detail panel and share a decision when it should be reused elsewhere.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {decisionUsages.map(({sharedDecision, usages}) => {
+                const alreadyInActiveProject = usages.some((usage) => usage.projectId === activeProject.id);
+                return (
+                  <div key={sharedDecision.id} className="rounded-3xl border border-slate-200 bg-slate-50/70 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="font-mono text-[11px] font-bold text-primary">{sharedDecision.id}</div>
+                        <h3 className="mt-1 text-lg font-extrabold text-on-surface">{sharedDecision.title}</h3>
+                        <p className="mt-2 text-sm leading-relaxed text-on-surface-variant">
+                          {sharedDecision.outcome || sharedDecision.context || 'No shared decision narrative yet.'}
+                        </p>
+                      </div>
+                      <button
+                        className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-on-surface shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={alreadyInActiveProject}
+                        onClick={() => onAddSharedDecisionToProject(sharedDecision.id)}
+                        type="button"
+                      >
+                        {alreadyInActiveProject ? 'Already In Project' : `Add To ${activeProject.name}`}
+                      </button>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+                        Used in {usages.length} project{usages.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="mt-4 space-y-2">
+                      {usages.map((usage) => (
+                        <div key={`${sharedDecision.id}-${usage.projectId}`} className="rounded-2xl bg-white px-4 py-3">
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="text-sm font-semibold text-on-surface">{usage.projectName}</div>
+                            <div className="text-xs text-on-surface-variant">Status {usage.decision.status}</div>
+                          </div>
+                          <div className="mt-1 text-xs text-on-surface-variant">
+                            Deciders {usage.decision.deciders || 'Not assigned'} · {usage.decision.linkedRisks.length} linked risk{usage.decision.linkedRisks.length === 1 ? '' : 's'}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
@@ -2189,6 +3206,7 @@ function SnapshotPage({
               <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Included In Export</div>
               <div className="mt-3 space-y-2 text-sm text-on-surface-variant">
                 <div>All projects, risks, and decisions</div>
+                <div>Shared risk and decision library records</div>
                 <div>Central scoring model definitions</div>
                 <div>Current active project selection</div>
                 <div>Version and export timestamp metadata</div>
@@ -2701,7 +3719,14 @@ function RiskRegisterPage({
                         <td className="px-6 py-5 font-mono text-sm font-bold text-primary">{risk.id}</td>
                         <td className="px-6 py-5">
                           <div className="space-y-1">
-                            <div className="text-sm font-bold text-on-surface">{risk.title}</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="text-sm font-bold text-on-surface">{risk.title}</div>
+                              {risk.sharedRiskId ? (
+                                <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-primary">
+                                  Shared
+                                </span>
+                              ) : null}
+                            </div>
                             <div className="max-w-xl text-xs leading-relaxed text-on-surface-variant">{risk.statement}</div>
                           </div>
                         </td>
@@ -2832,6 +3857,12 @@ function DecisionRegisterPage({
   onUpdateDecision,
   onDeleteDecision,
   onShowRisk,
+  onShareDecision,
+  onPublishSharedDecision,
+  onRefreshFromSharedDecision,
+  sharedDecisions,
+  projects,
+  activeProjectId,
 }: {
   decisions: Decision[];
   selectedDecision: Decision | null;
@@ -2840,6 +3871,12 @@ function DecisionRegisterPage({
   onUpdateDecision: (decisionId: string, updates: Partial<Decision>) => void;
   onDeleteDecision: (decisionId: string) => void;
   onShowRisk: (riskId: string) => void;
+  onShareDecision: (decisionId: string) => void;
+  onPublishSharedDecision: (decisionId: string) => void;
+  onRefreshFromSharedDecision: (decisionId: string) => void;
+  sharedDecisions: SharedDecision[];
+  projects: Project[];
+  activeProjectId: string;
 }) {
   const [statusFilter, setStatusFilter] = useState<'All' | DecisionStatus>('All');
   const [deciderFilter, setDeciderFilter] = useState('All');
@@ -2953,7 +3990,14 @@ function DecisionRegisterPage({
                   <td className={`whitespace-nowrap px-5 py-5 font-mono text-sm font-bold ${dimmed ? 'text-slate-500' : 'text-primary'}`}>{decision.id}</td>
                   <td className="px-5 py-5">
                     <div className="space-y-0.5">
-                      <div className={`text-sm font-bold ${dimmed ? 'text-slate-600' : 'text-on-surface'}`}>{decision.title}</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className={`text-sm font-bold ${dimmed ? 'text-slate-600' : 'text-on-surface'}`}>{decision.title}</div>
+                        {decision.sharedDecisionId ? (
+                          <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-primary">
+                            Shared
+                          </span>
+                        ) : null}
+                      </div>
                       <div className="line-clamp-1 text-xs text-on-surface-variant">{getDecisionPreview(decision)}</div>
                     </div>
                   </td>
@@ -3019,6 +4063,24 @@ function DecisionRegisterPage({
             onUpdate={(updates) => onUpdateDecision(selectedDecision.id, updates)}
             onDelete={() => onDeleteDecision(selectedDecision.id)}
             onShowRisk={onShowRisk}
+            onShareDecision={() => onShareDecision(selectedDecision.id)}
+            onPublishSharedDecision={() => onPublishSharedDecision(selectedDecision.id)}
+            onRefreshFromSharedDecision={() => onRefreshFromSharedDecision(selectedDecision.id)}
+            sharedDecision={sharedDecisions.find((item) => item.id === selectedDecision.sharedDecisionId) ?? null}
+            sharedUsages={
+              selectedDecision.sharedDecisionId
+                ? projects.flatMap((project) =>
+                    project.decisions
+                      .filter((decision) => decision.sharedDecisionId === selectedDecision.sharedDecisionId)
+                      .map((decision) => ({
+                        projectId: project.id,
+                        projectName: project.name,
+                        decision,
+                        isActiveProject: project.id === activeProjectId,
+                      })),
+                  )
+                : []
+            }
           />
         ) : (
           <div className="flex items-center justify-center rounded-[1.75rem] bg-white p-12 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
@@ -3041,12 +4103,22 @@ function DecisionDetailPanel({
   onUpdate,
   onDelete,
   onShowRisk,
+  onShareDecision,
+  onPublishSharedDecision,
+  onRefreshFromSharedDecision,
+  sharedDecision,
+  sharedUsages,
 }: {
   decision: Decision;
   risks: Risk[];
   onUpdate: (updates: Partial<Decision>) => void;
   onDelete: () => void;
   onShowRisk: (riskId: string) => void;
+  onShareDecision: () => void;
+  onPublishSharedDecision: () => void;
+  onRefreshFromSharedDecision: () => void;
+  sharedDecision: SharedDecision | null;
+  sharedUsages: Array<{projectId: string; projectName: string; decision: Decision; isActiveProject: boolean}>;
 }) {
   const [editingOutcome, setEditingOutcome] = useState(false);
   const [outcomeDraft, setOutcomeDraft] = useState(decision.outcome);
@@ -3093,6 +4165,32 @@ function DecisionDetailPanel({
                 {savedLabel}
               </span>
             ) : null}
+            {!decision.sharedDecisionId ? (
+              <button
+                className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-700 transition hover:bg-slate-200"
+                onClick={onShareDecision}
+                type="button"
+              >
+                Share
+              </button>
+            ) : (
+              <>
+                <button
+                  className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-700 transition hover:bg-slate-200"
+                  onClick={onRefreshFromSharedDecision}
+                  type="button"
+                >
+                  Refresh
+                </button>
+                <button
+                  className="rounded-full bg-primary px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-primary-dim"
+                  onClick={onPublishSharedDecision}
+                  type="button"
+                >
+                  Update Shared
+                </button>
+              </>
+            )}
             {confirmDelete ? (
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-500">Delete?</span>
@@ -3139,6 +4237,36 @@ function DecisionDetailPanel({
             />
           </div>
         </div>
+        {decision.sharedDecisionId ? (
+          <div className="mt-4 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
+                Shared Decision {decision.sharedDecisionId}
+              </span>
+              <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+                Used in {sharedUsages.length} project{sharedUsages.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            <div className="text-sm leading-relaxed text-on-surface-variant">
+              The shared decision description can be reused across projects, while status, deciders, date, linked risks, and local follow-through remain project-specific.
+            </div>
+            {sharedDecision ? (
+              <div className="mt-3 space-y-2">
+                {sharedUsages.map((usage) => (
+                  <div key={`${decision.sharedDecisionId}-${usage.projectId}`} className="rounded-xl bg-white px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-on-surface">
+                        {usage.projectName}
+                        {usage.isActiveProject ? ' (current project)' : ''}
+                      </div>
+                      <div className="text-xs text-on-surface-variant">Status {usage.decision.status}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       {/* Context and Problem Statement */}
@@ -3709,9 +4837,13 @@ function RiskDrawer({
   onUpdateRisk,
   existingIds,
   ownerOptions,
-  categoryOptions,
   linkedDecisionOptions,
   decisions,
+  projects,
+  sharedRisks,
+  activeProjectId,
+  onShareRisk,
+  onSyncSharedRiskDescription,
 }: {
   open: boolean;
   risk: Risk;
@@ -3722,10 +4854,19 @@ function RiskDrawer({
   onUpdateRisk: (riskId: string, updates: Partial<Risk>, historyLabel: string) => void;
   existingIds: string[];
   ownerOptions: string[];
-  categoryOptions: string[];
   linkedDecisionOptions: SelectOption[];
   decisions: Decision[];
+  projects: Project[];
+  sharedRisks: SharedRisk[];
+  activeProjectId: string;
+  onShareRisk: (riskId: string) => void;
+  onSyncSharedRiskDescription: (
+    riskId: string,
+    updates: Pick<Risk, 'trigger' | 'consequence' | 'statement'>,
+    historyLabel: string,
+  ) => void;
 }) {
+  const backdropPressStarted = useRef(false);
   const [editingField, setEditingField] = useState<QuickEditFieldName | null>(null);
   const [savedFieldLabel, setSavedFieldLabel] = useState<string | null>(null);
   const [editingStatement, setEditingStatement] = useState(false);
@@ -3826,7 +4967,6 @@ function RiskDrawer({
       dueDate: 'Due date updated',
       status: 'Status updated',
       linkedDecision: 'Linked decision updated',
-      category: 'Category updated',
       responseType: 'Response updated',
       likelihood: 'Likelihood updated',
       impact: 'Impact updated',
@@ -3869,20 +5009,20 @@ function RiskDrawer({
   }
 
   function saveStatementEdit() {
-    onUpdateRisk(
-      risk.id,
-      {
-        trigger: draftNarrative.trigger,
-        consequence: draftNarrative.consequence,
-        statement: buildRiskStatement(
-          draftNarrative.trigger,
-          draftNarrative.consequence,
-        ),
-      },
-      'Risk statement updated',
-    );
+    const statementUpdates = {
+      trigger: draftNarrative.trigger,
+      consequence: draftNarrative.consequence,
+      statement: buildRiskStatement(draftNarrative.trigger, draftNarrative.consequence),
+    };
+
+    if (risk.sharedRiskId) {
+      onSyncSharedRiskDescription(risk.id, statementUpdates, 'Risk statement updated');
+    } else {
+      onUpdateRisk(risk.id, statementUpdates, 'Risk statement updated');
+    }
+
     setEditingStatement(false);
-    setSavedFieldLabel('Risk statement saved');
+    setSavedFieldLabel(risk.sharedRiskId ? 'Risk statement synced across projects' : 'Risk statement saved');
   }
 
   function saveMitigationEdit() {
@@ -3899,11 +5039,58 @@ function RiskDrawer({
   }
 
   const mitigationRequired = risk.severity !== 'Low';
+  const sharedRiskUsages = risk.sharedRiskId
+    ? projects.flatMap((project) =>
+        project.risks
+          .filter((projectRisk) => projectRisk.sharedRiskId === risk.sharedRiskId)
+          .map((projectRisk) => ({
+            projectId: project.id,
+            projectName: project.name,
+            risk: projectRisk,
+            isActiveProject: project.id === activeProjectId,
+            scoringModelMatches: scoringModelsMatch(project.scoringModel, scoringModel),
+          })),
+      )
+    : [];
+  const hasDifferentSharedRubric = sharedRiskUsages.some((usage) => !usage.scoringModelMatches);
+  const sharedRiskRecord = risk.sharedRiskId ? sharedRisks.find((item) => item.id === risk.sharedRiskId) ?? null : null;
+  const suggestedLocalImpact =
+    sharedRiskRecord?.sharedImpactProfile
+      ? mapSharedImpactProfileToLocalScore(scoringModel.impact, sharedRiskRecord.sharedImpactProfile)
+      : null;
+  const sharedImpactSummary = sharedRiskRecord?.sharedImpactProfile
+    ? `${
+        sharedRiskRecord.sharedImpactProfile.basis === 'schedule' ? 'Schedule' : 'Cost'
+      } basis: ${
+        sharedRiskRecord.sharedImpactProfile.basis === 'schedule'
+          ? formatImpactRange(sharedRiskRecord.sharedImpactProfile.min, sharedRiskRecord.sharedImpactProfile.max, 'months')
+          : formatImpactRange(sharedRiskRecord.sharedImpactProfile.min, sharedRiskRecord.sharedImpactProfile.max, '', '$')
+      }`
+    : null;
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/10" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 bg-slate-950/10"
+      onClick={(event) => {
+        if (backdropPressStarted.current && event.target === event.currentTarget) {
+          onClose();
+        }
+        backdropPressStarted.current = false;
+      }}
+      onMouseDown={(event) => {
+        backdropPressStarted.current = event.target === event.currentTarget;
+      }}
+      onMouseUp={() => {
+        window.setTimeout(() => {
+          backdropPressStarted.current = false;
+        }, 0);
+      }}
+    >
       <aside
         className="fixed inset-y-0 right-0 flex w-[28rem] flex-col border-l border-slate-200 bg-white shadow-[-20px_0_50px_rgba(42,52,57,0.12)]"
         onClick={(event) => event.stopPropagation()}
+        onMouseDown={() => {
+          backdropPressStarted.current = false;
+        }}
       >
       <div className="shrink-0 border-b border-slate-200 px-6 py-5">
             <div className="mb-4 flex items-start justify-between gap-4">
@@ -4030,8 +5217,80 @@ function RiskDrawer({
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {!risk.sharedRiskId ? (
+            <DrawerAction icon="share" label="Share" onClick={() => onShareRisk(risk.id)} />
+          ) : null}
           <DrawerAction destructive icon="delete" label="Delete" onClick={() => setConfirmDelete(true)} />
         </div>
+
+        {risk.sharedRiskId ? (
+          <div className="rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
+                Shared Risk {risk.sharedRiskId}
+              </span>
+              <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+                Used in {sharedRiskUsages.length} project{sharedRiskUsages.length === 1 ? '' : 's'}
+              </span>
+              {sharedImpactSummary ? (
+                <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+                  {sharedImpactSummary}
+                </span>
+              ) : null}
+              {hasDifferentSharedRubric ? (
+                <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-amber-800">
+                  Different scoring rubrics
+                </span>
+              ) : null}
+            </div>
+            <div className="text-sm leading-relaxed text-on-surface-variant">
+              This shared risk carries one common description across every linked project. Changes to the risk statement, trigger, and consequence sync automatically everywhere this shared risk is used. Likelihood, impact, severity, owner, response, and status shown here remain specific to this project.
+            </div>
+            {suggestedLocalImpact != null ? (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-on-surface-variant">
+                Suggested local impact from shared profile:
+                {' '}
+                <span className="font-semibold text-on-surface">
+                  {suggestedLocalImpact} - {getScoreDefinition(scoringModel.impact, suggestedLocalImpact)?.label ?? suggestedLocalImpact}
+                </span>
+                {suggestedLocalImpact !== risk.impact ? (
+                  <span className="text-amber-800">
+                    {' '}
+                    This project currently uses impact {risk.impact}, so the local assessment differs from the shared translation suggestion.
+                  </span>
+                ) : (
+                  <span>
+                    {' '}
+                    This matches the current local impact score.
+                  </span>
+                )}
+              </div>
+            ) : null}
+            {hasDifferentSharedRubric ? (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-900">
+                Other projects using this risk have different Likelihood and Impact definitions. Scores should be compared carefully rather than treated as directly equivalent.
+              </div>
+            ) : null}
+            <div className="mt-3 space-y-2">
+              {sharedRiskUsages.map((usage) => (
+                <div key={`${risk.sharedRiskId}-${usage.projectId}`} className="rounded-xl bg-white px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-on-surface">
+                      {usage.projectName}
+                      {usage.isActiveProject ? ' (current project)' : ''}
+                    </div>
+                    <div className="text-xs text-on-surface-variant">
+                      Likelihood {usage.risk.likelihood} · Impact {usage.risk.impact} · {usage.risk.residualRating}
+                    </div>
+                  </div>
+                  <div className="mt-1 text-xs text-on-surface-variant">
+                    Status {usage.risk.status} · Owner {usage.risk.owner || 'Not assigned'} · Response {usage.risk.responseType}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {pendingScoreChange ? (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
@@ -4128,15 +5387,6 @@ function RiskDrawer({
                 onSave={saveQuickField}
               />
               <DrawerMeta label="Residual rating" value={risk.residualRating} />
-              <QuickEditSelect
-                activeField={editingField}
-                field="category"
-                label="Category"
-                options={categoryOptions}
-                value={risk.category}
-                onBeginEdit={setEditingField}
-                onSave={saveQuickField}
-              />
             </div>
           </div>
           <RiskStatementField
@@ -4380,10 +5630,16 @@ function ScoringDefinitionEditor({
   title,
   definitions,
   onChange,
+  showImpactRanges,
 }: {
   title: string;
   definitions: ScoreDefinition[];
-  onChange: (value: number, field: 'label' | 'description', nextValue: string) => void;
+  onChange: (
+    value: number,
+    field: 'label' | 'description' | 'scheduleMinMonths' | 'scheduleMaxMonths' | 'costMinAmount' | 'costMaxAmount',
+    nextValue: string,
+  ) => void;
+  showImpactRanges: boolean;
 }) {
   return (
     <section className="rounded-3xl bg-slate-50 p-5">
@@ -4412,6 +5668,75 @@ function ScoringDefinitionEditor({
                   value={definition.description}
                 />
               </FormField>
+              {showImpactRanges ? (
+                <>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-4">
+                    <div className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+                      Schedule Impact Band
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <FormField label="Min months">
+                        <input
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-on-surface outline-none transition focus:border-primary/25 focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
+                          min="0"
+                          onChange={(event) => onChange(definition.value, 'scheduleMinMonths', event.target.value)}
+                          placeholder="Optional"
+                          step="0.1"
+                          type="number"
+                          value={definition.scheduleMinMonths ?? ''}
+                        />
+                      </FormField>
+                      <FormField label="Max months">
+                        <input
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-on-surface outline-none transition focus:border-primary/25 focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
+                          min="0"
+                          onChange={(event) => onChange(definition.value, 'scheduleMaxMonths', event.target.value)}
+                          placeholder="Leave blank for open-ended"
+                          step="0.1"
+                          type="number"
+                          value={definition.scheduleMaxMonths ?? ''}
+                        />
+                      </FormField>
+                    </div>
+                    <div className="mt-2 text-xs leading-relaxed text-on-surface-variant">
+                      Use blank max for open-ended bands such as anything greater than 12 months.
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-4">
+                    <div className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+                      Cost Impact Band
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <FormField label="Min dollars">
+                        <input
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-on-surface outline-none transition focus:border-primary/25 focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
+                          min="0"
+                          onChange={(event) => onChange(definition.value, 'costMinAmount', event.target.value)}
+                          placeholder="Optional"
+                          step="1000"
+                          type="number"
+                          value={definition.costMinAmount ?? ''}
+                        />
+                      </FormField>
+                      <FormField label="Max dollars">
+                        <input
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-on-surface outline-none transition focus:border-primary/25 focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
+                          min="0"
+                          onChange={(event) => onChange(definition.value, 'costMaxAmount', event.target.value)}
+                          placeholder="Leave blank for open-ended"
+                          step="1000"
+                          type="number"
+                          value={definition.costMaxAmount ?? ''}
+                        />
+                      </FormField>
+                    </div>
+                    <div className="mt-2 text-xs leading-relaxed text-on-surface-variant">
+                      These optional dollar ranges allow shared risks to map into another project&apos;s local impact score when cost impacts are used as the common basis.
+                    </div>
+                  </div>
+                </>
+              ) : null}
             </div>
           </div>
         ))}
@@ -4775,7 +6100,9 @@ function QuickEditSelect({
             ))}
           </select>
           {selectedOption?.description ? (
-            <div className="mt-2 text-xs leading-relaxed text-on-surface-variant">{selectedOption.description}</div>
+            <div className="mt-2 space-y-1 text-xs leading-relaxed text-on-surface-variant">
+              {renderSelectDescription(selectedOption.description)}
+            </div>
           ) : null}
         </div>
       ) : (
@@ -4784,7 +6111,9 @@ function QuickEditSelect({
             {field.includes('Date') ? formatDisplayDate(value) : selectedOption?.label ?? value}
           </div>
           {selectedOption?.description ? (
-            <div className="mt-1 text-xs leading-relaxed text-on-surface-variant">{selectedOption.description}</div>
+            <div className="mt-1 space-y-1 text-xs leading-relaxed text-on-surface-variant">
+              {renderSelectDescription(selectedOption.description)}
+            </div>
           ) : null}
         </div>
       )}
