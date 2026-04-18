@@ -4,10 +4,19 @@ type View = 'risk' | 'decision' | 'library' | 'snapshot' | 'settings';
 
 type RiskStatus = 'Pending' | 'Active' | 'Monitoring' | 'Rejected' | 'Closed';
 type RiskSeverity = 'High' | 'Medium' | 'Low';
+type SharedRiskRole = 'source' | 'linked';
+type SharedRiskReviewStatus = 'current' | 'review_required' | 'reviewed_no_change' | 'updated_after_review';
+type SharedRiskSubscriptionState = 'watching' | 'linked' | 'review_required' | 'not_applicable';
+type HistoryEntry = {label: string; meta: string; at?: string};
 
 type Risk = {
   id: string;
+  originKey: string;
   sharedRiskId?: string;
+  sharedRiskRole?: SharedRiskRole;
+  sharedParentVersionSeen?: number | null;
+  sharedReviewStatus?: SharedRiskReviewStatus;
+  sharedOverrideRationale?: string;
   title: string;
   statement: string;
   trigger: string;
@@ -30,7 +39,7 @@ type Risk = {
   comments: number;
   createdBy: string;
   internalOnly: boolean;
-  history: {label: string; meta: string}[];
+  history: HistoryEntry[];
 };
 
 type DecisionStatus = 'Approved' | 'Implemented' | 'Proposed' | 'Deferred' | 'Rejected';
@@ -77,19 +86,47 @@ type SelectOption = {
 
 type SharedRisk = {
   id: string;
+  referenceCode: string;
   title: string;
   statement: string;
   trigger: string;
   consequence: string;
+  status: RiskStatus;
+  owner: string;
+  upstreamLikelihood: number;
+  upstreamImpact: number;
+  responseSummary: string;
   sourceImpactScore: number;
+  sourceOriginRiskKey: string;
   sharedImpactProfile?: {
     basis: 'schedule' | 'cost';
     min: number;
     max: number | null;
     sourceScore: number;
   };
+  versionNumber: number;
+  createdAt: string;
   updatedAt: string;
+  sharedAt: string;
   sourceProjectId: string;
+  isArchived: boolean;
+  lastChangeSummary: string[];
+  history: HistoryEntry[];
+};
+
+type SharedRiskSubscription = {
+  id: string;
+  sharedRiskId: string;
+  projectId: string;
+  state: SharedRiskSubscriptionState;
+  createdAt: string;
+  updatedAt: string;
+  lastSeenSharedRiskVersion: number;
+  lastReviewedSharedRiskVersion: number | null;
+  lastReviewedAt: string;
+  reviewedByName: string;
+  reviewComment: string;
+  linkedLocalRiskId: string | null;
 };
 
 type SharedDecision = {
@@ -116,23 +153,935 @@ type Project = {
   scoringModel: RiskScoringModel;
 };
 
+type RegistryMetadata = {
+  documentId: string;
+  name: string;
+  revision: number;
+  contentHash: string;
+  parentRevision: number | null;
+  parentContentHash: string | null;
+  lastModifiedAt: string;
+  lastModifiedBy: string;
+};
+
 type AppSnapshot = {
   version: string;
   exportedAt: string;
+  registry?: RegistryMetadata;
   activeProjectId: string;
   projects: Project[];
   sharedLibrary?: {
     risks: SharedRisk[];
     decisions: SharedDecision[];
+    riskSubscriptions?: SharedRiskSubscription[];
   };
+};
+
+type RegistrySessionStatus =
+  | 'no_registry_loaded'
+  | 'master_loaded_clean'
+  | 'master_loaded_dirty'
+  | 'publish_in_progress'
+  | 'recovery_draft_available';
+
+type RegistrySession = {
+  sourceLabel: string;
+  sourceFileName: string;
+  registryName: string;
+  baseDocumentId: string | null;
+  baseRevision: number | null;
+  baseContentHash: string | null;
+  loadedAt: string | null;
+  lastPublishedAt: string | null;
+  lastPublishedRevision: number | null;
+  status: RegistrySessionStatus;
+  lastError: string;
+};
+
+type RecoveryDraft = {
+  snapshot: AppSnapshot;
+  session: RegistrySession;
+  savedAt: string;
 };
 
 const RISK_SCORING_STORAGE_KEY = 'risk-decision-register.scoring-model.v1';
 const PROJECTS_STORAGE_KEY = 'risk-decision-register.projects.v1';
 const ACTIVE_PROJECT_ID_KEY = 'risk-decision-register.active-project.v1';
 const SHARED_RISKS_STORAGE_KEY = 'risk-decision-register.shared-risks.v1';
+const SHARED_RISK_SUBSCRIPTIONS_STORAGE_KEY = 'risk-decision-register.shared-risk-subscriptions.v1';
 const SHARED_DECISIONS_STORAGE_KEY = 'risk-decision-register.shared-decisions.v1';
-const APP_SNAPSHOT_VERSION = '1';
+const REGISTRY_DRAFT_STORAGE_KEY = 'risk-decision-register.registry-draft.v2';
+const EDITOR_NAME_STORAGE_KEY = 'risk-decision-register.editor-name.v1';
+const APP_SNAPSHOT_VERSION = '2';
+
+function createRegistryDocumentId() {
+  return `registry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sanitizeFileStem(value: string) {
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'governance-register'
+  );
+}
+
+function hashStringFNV1a(value: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `fnv1a32:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function stableSerialize(value: unknown): string {
+  if (value === null) {
+    return 'null';
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return JSON.stringify(value);
+  }
+
+  if (typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableSerialize(entry)).join(',')}]`;
+  }
+
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry)}`)
+      .join(',')}}`;
+  }
+
+  return JSON.stringify(String(value));
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
+  const boardName = snapshot.registry?.name || 'Governance Register';
+  const exportedAt = snapshot.exportedAt;
+  const safeSnapshotJson = JSON.stringify(snapshot)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/<\/script/gi, '<\\/script');
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(boardName)} - Read Only</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #eef3f6;
+        --surface: #ffffff;
+        --surface-alt: #f8fafc;
+        --border: #dbe4ea;
+        --text: #243342;
+        --text-muted: #5f6f81;
+        --primary: #4f5e7e;
+        --primary-soft: rgba(79, 94, 126, 0.12);
+        --danger-soft: #ffe2e2;
+        --danger-text: #a93232;
+        --warning-soft: #fff1c2;
+        --warning-text: #8a5d00;
+        --success-soft: #dff3e7;
+        --success-text: #16653a;
+        --shadow: 0 20px 60px rgba(42, 52, 57, 0.08);
+        --radius-xl: 28px;
+        --radius-lg: 20px;
+        --radius-md: 14px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, "Segoe UI", sans-serif;
+        background: linear-gradient(180deg, #f6f9fb 0%, var(--bg) 100%);
+        color: var(--text);
+      }
+      .app-shell {
+        min-height: 100vh;
+        padding: 28px;
+      }
+      .board {
+        max-width: 1500px;
+        margin: 0 auto;
+        display: grid;
+        gap: 20px;
+      }
+      .hero {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow);
+        padding: 28px;
+      }
+      .eyebrow {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--primary);
+      }
+      .hero h1 {
+        margin: 10px 0 8px;
+        font-size: clamp(30px, 4vw, 42px);
+        line-height: 1.05;
+      }
+      .hero p {
+        margin: 0;
+        max-width: 860px;
+        color: var(--text-muted);
+        line-height: 1.6;
+      }
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 14px;
+        margin-top: 22px;
+      }
+      .meta-card {
+        background: var(--surface-alt);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 16px 18px;
+      }
+      .meta-label {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+      .meta-value {
+        margin-top: 8px;
+        font-size: 15px;
+        font-weight: 700;
+      }
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .pill,
+      .tab {
+        border: 0;
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--text);
+        padding: 11px 18px;
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        cursor: pointer;
+        box-shadow: 0 4px 14px rgba(42, 52, 57, 0.06);
+      }
+      .pill.active,
+      .tab.active {
+        background: var(--primary);
+        color: #fff;
+      }
+      .content-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.95fr);
+        gap: 20px;
+      }
+      .panel {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow);
+        padding: 22px;
+        min-height: 520px;
+      }
+      .panel-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .panel-title h2 {
+        margin: 0;
+        font-size: 24px;
+      }
+      .panel-title p {
+        margin: 6px 0 0;
+        font-size: 14px;
+        color: var(--text-muted);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      thead th {
+        text-align: left;
+        padding: 12px 10px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+        border-bottom: 1px solid var(--border);
+      }
+      tbody td {
+        padding: 14px 10px;
+        border-bottom: 1px solid #edf2f5;
+        vertical-align: top;
+        font-size: 14px;
+      }
+      tbody tr {
+        cursor: pointer;
+        transition: background 150ms ease;
+      }
+      tbody tr:hover {
+        background: #f8fbfd;
+      }
+      tbody tr.active {
+        background: #eef4fb;
+      }
+      .muted {
+        color: var(--text-muted);
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .chip.low, .chip.approved, .chip.implemented {
+        background: var(--success-soft);
+        color: var(--success-text);
+      }
+      .chip.medium, .chip.proposed, .chip.deferred, .chip.pending, .chip.monitoring {
+        background: var(--warning-soft);
+        color: var(--warning-text);
+      }
+      .chip.high, .chip.rejected, .chip.closed {
+        background: var(--danger-soft);
+        color: var(--danger-text);
+      }
+      .detail-stack {
+        display: grid;
+        gap: 14px;
+      }
+      .detail-header {
+        padding: 18px;
+        background: var(--surface-alt);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+      }
+      .detail-header h3 {
+        margin: 8px 0 0;
+        font-size: 24px;
+        line-height: 1.15;
+      }
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .detail-card {
+        padding: 14px 16px;
+        background: var(--surface-alt);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+      }
+      .detail-card.wide {
+        grid-column: 1 / -1;
+      }
+      .detail-card .label {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+      .detail-card .value {
+        margin-top: 8px;
+        font-size: 14px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+      }
+      .empty {
+        display: grid;
+        place-items: center;
+        min-height: 320px;
+        text-align: center;
+        color: var(--text-muted);
+        padding: 32px;
+      }
+      .footer-note {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      @media (max-width: 1100px) {
+        .content-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 720px) {
+        .app-shell {
+          padding: 16px;
+        }
+        .hero,
+        .panel {
+          padding: 18px;
+        }
+        .detail-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <div class="board">
+        <section class="hero">
+          <div class="eyebrow">Read-Only Governance Register</div>
+          <h1>${escapeHtml(boardName)}</h1>
+          <p>This exported board is view-only. It is intended for review, walkthroughs, and sharing with teammates who should be able to inspect current risks and decisions without editing the source register.</p>
+          <div class="meta-grid">
+            <div class="meta-card">
+              <div class="meta-label">Exported</div>
+              <div class="meta-value" id="meta-exportedAt"></div>
+            </div>
+            <div class="meta-card">
+              <div class="meta-label">Board Revision</div>
+              <div class="meta-value" id="meta-revision"></div>
+            </div>
+            <div class="meta-card">
+              <div class="meta-label">Projects</div>
+              <div class="meta-value" id="meta-projectCount"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="toolbar">
+          <div class="pill-row" id="projectTabs"></div>
+          <div class="pill-row">
+            <button class="tab active" data-record-type="risks" type="button">Risks</button>
+            <button class="tab" data-record-type="decisions" type="button">Decisions</button>
+          </div>
+        </section>
+
+        <section class="content-grid">
+          <div class="panel">
+            <div class="panel-title">
+              <div>
+                <h2 id="tableTitle">Current Risks</h2>
+                <p id="tableSubtitle"></p>
+              </div>
+              <div class="footer-note" id="tableCount"></div>
+            </div>
+            <div id="tableHost"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-title">
+              <div>
+                <h2 id="detailTitle">Details</h2>
+                <p id="detailSubtitle">Select a record to inspect the current read-only details.</p>
+              </div>
+            </div>
+            <div id="detailHost"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script id="board-data" type="application/json">${safeSnapshotJson}</script>
+    <script>
+      const snapshot = JSON.parse(document.getElementById('board-data').textContent);
+      const state = {
+        projectId: snapshot.activeProjectId || snapshot.projects[0]?.id || '',
+        recordType: 'risks',
+        selectedId: '',
+      };
+
+      const els = {
+        projectTabs: document.getElementById('projectTabs'),
+        tableHost: document.getElementById('tableHost'),
+        detailHost: document.getElementById('detailHost'),
+        tableTitle: document.getElementById('tableTitle'),
+        tableSubtitle: document.getElementById('tableSubtitle'),
+        tableCount: document.getElementById('tableCount'),
+        detailTitle: document.getElementById('detailTitle'),
+        detailSubtitle: document.getElementById('detailSubtitle'),
+        metaExportedAt: document.getElementById('meta-exportedAt'),
+        metaRevision: document.getElementById('meta-revision'),
+        metaProjectCount: document.getElementById('meta-projectCount'),
+      };
+
+      function formatDateTime(value) {
+        if (!value) return 'Not available';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return String(value);
+        return new Intl.DateTimeFormat(undefined, {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        }).format(date);
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function statusChipClass(value) {
+        const normalized = String(value || '').toLowerCase();
+        if (['high', 'rejected', 'closed'].includes(normalized)) return 'chip high';
+        if (['medium', 'proposed', 'deferred', 'pending', 'monitoring'].includes(normalized)) return 'chip medium';
+        return 'chip low';
+      }
+
+      function getProject() {
+        return snapshot.projects.find((project) => project.id === state.projectId) || snapshot.projects[0] || null;
+      }
+
+      function getRecords(project) {
+        if (!project) return [];
+        return state.recordType === 'risks' ? project.risks : project.decisions;
+      }
+
+      function ensureSelection(records) {
+        if (!records.length) {
+          state.selectedId = '';
+          return;
+        }
+        const stillExists = records.some((record) => record.id === state.selectedId);
+        if (!stillExists) {
+          state.selectedId = records[0].id;
+        }
+      }
+
+      function renderProjectTabs() {
+        els.projectTabs.innerHTML = snapshot.projects
+          .map((project) => \`<button class="pill \${project.id === state.projectId ? 'active' : ''}" data-project-id="\${escapeHtml(project.id)}" type="button">\${escapeHtml(project.name)}</button>\`)
+          .join('');
+      }
+
+      function renderTable(project, records) {
+        if (!project || !records.length) {
+          els.tableHost.innerHTML = '<div class="empty">No records are available for this project in the current view.</div>';
+          return;
+        }
+
+        if (state.recordType === 'risks') {
+          els.tableHost.innerHTML = \`
+            <table>
+              <thead>
+                <tr>
+                  <th>Risk</th>
+                  <th>Status</th>
+                  <th>Owner</th>
+                  <th>Score</th>
+                  <th>Response</th>
+                  <th>Last Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                \${records.map((risk) => \`
+                  <tr class="\${risk.id === state.selectedId ? 'active' : ''}" data-record-id="\${escapeHtml(risk.id)}">
+                    <td>
+                      <div style="font-weight: 700;">\${escapeHtml(risk.id)} · \${escapeHtml(risk.title)}</div>
+                      <div class="muted" style="margin-top: 4px;">\${escapeHtml(risk.statement || 'No risk statement recorded.')}</div>
+                    </td>
+                    <td><span class="\${statusChipClass(risk.status)}">\${escapeHtml(risk.status)}</span></td>
+                    <td>\${escapeHtml(risk.owner || 'Not assigned')}</td>
+                    <td>\${escapeHtml(String(risk.likelihood))} × \${escapeHtml(String(risk.impact))} = \${escapeHtml(risk.residualRating)}</td>
+                    <td>\${escapeHtml(risk.responseType || 'Not defined')}</td>
+                    <td>\${escapeHtml(formatDateTime(risk.lastUpdated))}</td>
+                  </tr>
+                \`).join('')}
+              </tbody>
+            </table>
+          \`;
+          return;
+        }
+
+        els.tableHost.innerHTML = \`
+          <table>
+            <thead>
+              <tr>
+                <th>Decision</th>
+                <th>Status</th>
+                <th>Deciders</th>
+                <th>Date</th>
+                <th>Linked Risks</th>
+              </tr>
+            </thead>
+            <tbody>
+              \${records.map((decision) => \`
+                <tr class="\${decision.id === state.selectedId ? 'active' : ''}" data-record-id="\${escapeHtml(decision.id)}">
+                  <td>
+                    <div style="font-weight: 700;">\${escapeHtml(decision.id)} · \${escapeHtml(decision.title)}</div>
+                    <div class="muted" style="margin-top: 4px;">\${escapeHtml(decision.outcome || decision.context || 'No decision outcome recorded.')}</div>
+                  </td>
+                  <td><span class="\${statusChipClass(decision.status)}">\${escapeHtml(decision.status)}</span></td>
+                  <td>\${escapeHtml(decision.deciders || 'Not assigned')}</td>
+                  <td>\${escapeHtml(formatDateTime(decision.date))}</td>
+                  <td>\${escapeHtml(String((decision.linkedRisks || []).length))}</td>
+                </tr>
+              \`).join('')}
+            </tbody>
+          </table>
+        \`;
+      }
+
+      function renderRiskDetail(risk) {
+        els.detailHost.innerHTML = \`
+          <div class="detail-stack">
+            <div class="detail-header">
+              <div class="eyebrow">\${escapeHtml(risk.id)}</div>
+              <h3>\${escapeHtml(risk.title)}</h3>
+            </div>
+            <div class="detail-grid">
+              <div class="detail-card">
+                <div class="label">Status</div>
+                <div class="value"><span class="\${statusChipClass(risk.status)}">\${escapeHtml(risk.status)}</span></div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Severity</div>
+                <div class="value"><span class="\${statusChipClass(risk.severity)}">\${escapeHtml(risk.severity)}</span></div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Owner</div>
+                <div class="value">\${escapeHtml(risk.owner || 'Not assigned')}</div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Assessment</div>
+                <div class="value">Likelihood \${escapeHtml(String(risk.likelihood))} · Impact \${escapeHtml(String(risk.impact))} · \${escapeHtml(risk.residualRating)}</div>
+              </div>
+              <div class="detail-card wide">
+                <div class="label">Risk Statement</div>
+                <div class="value">\${escapeHtml(risk.statement || 'No risk statement recorded.')}</div>
+              </div>
+              <div class="detail-card wide">
+                <div class="label">Trigger / Condition</div>
+                <div class="value">\${escapeHtml(risk.trigger || 'Not defined')}</div>
+              </div>
+              <div class="detail-card wide">
+                <div class="label">Consequence</div>
+                <div class="value">\${escapeHtml(risk.consequence || 'Not defined')}</div>
+              </div>
+              <div class="detail-card wide">
+                <div class="label">Mitigation Plan</div>
+                <div class="value">\${escapeHtml(risk.mitigation || 'Not defined')}</div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Response</div>
+                <div class="value">\${escapeHtml(risk.responseType || 'Not defined')}</div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Due Date</div>
+                <div class="value">\${escapeHtml(formatDateTime(risk.dueDate))}</div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Linked Decision</div>
+                <div class="value">\${escapeHtml(risk.linkedDecision || 'None')}</div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Last Updated</div>
+                <div class="value">\${escapeHtml(formatDateTime(risk.lastUpdated))}</div>
+              </div>
+            </div>
+          </div>
+        \`;
+      }
+
+      function renderDecisionDetail(decision) {
+        els.detailHost.innerHTML = \`
+          <div class="detail-stack">
+            <div class="detail-header">
+              <div class="eyebrow">\${escapeHtml(decision.id)}</div>
+              <h3>\${escapeHtml(decision.title)}</h3>
+            </div>
+            <div class="detail-grid">
+              <div class="detail-card">
+                <div class="label">Status</div>
+                <div class="value"><span class="\${statusChipClass(decision.status)}">\${escapeHtml(decision.status)}</span></div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Date</div>
+                <div class="value">\${escapeHtml(formatDateTime(decision.date))}</div>
+              </div>
+              <div class="detail-card wide">
+                <div class="label">Context</div>
+                <div class="value">\${escapeHtml(decision.context || 'Not recorded')}</div>
+              </div>
+              <div class="detail-card wide">
+                <div class="label">Decision Drivers</div>
+                <div class="value">\${escapeHtml((decision.decisionDrivers || []).join('\\n') || 'Not recorded')}</div>
+              </div>
+              <div class="detail-card wide">
+                <div class="label">Considered Options</div>
+                <div class="value">\${escapeHtml((decision.consideredOptions || []).join('\\n') || 'Not recorded')}</div>
+              </div>
+              <div class="detail-card wide">
+                <div class="label">Outcome</div>
+                <div class="value">\${escapeHtml(decision.outcome || 'Not recorded')}</div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Deciders</div>
+                <div class="value">\${escapeHtml(decision.deciders || 'Not assigned')}</div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Linked Risks</div>
+                <div class="value">\${escapeHtml((decision.linkedRisks || []).join(', ') || 'None')}</div>
+              </div>
+            </div>
+          </div>
+        \`;
+      }
+
+      function renderDetail(records) {
+        if (!records.length) {
+          els.detailHost.innerHTML = '<div class="empty">Nothing to inspect yet in this view.</div>';
+          return;
+        }
+        const selected = records.find((record) => record.id === state.selectedId) || records[0];
+        if (!selected) {
+          els.detailHost.innerHTML = '<div class="empty">Nothing to inspect yet in this view.</div>';
+          return;
+        }
+        if (state.recordType === 'risks') {
+          renderRiskDetail(selected);
+        } else {
+          renderDecisionDetail(selected);
+        }
+      }
+
+      function render() {
+        const project = getProject();
+        const records = getRecords(project);
+        ensureSelection(records);
+
+        els.metaExportedAt.textContent = formatDateTime('${exportedAt}');
+        els.metaRevision.textContent = snapshot.registry?.revision != null ? 'v' + snapshot.registry.revision : 'Not set';
+        els.metaProjectCount.textContent = String(snapshot.projects.length);
+        els.tableTitle.textContent = state.recordType === 'risks' ? 'Current Risks' : 'Current Decisions';
+        els.tableSubtitle.textContent = project
+          ? project.name + ' · ' + (state.recordType === 'risks' ? 'Read-only risk register' : 'Read-only decision register')
+          : 'No project selected';
+        els.tableCount.textContent = records.length + ' record' + (records.length === 1 ? '' : 's');
+
+        document.querySelectorAll('[data-record-type]').forEach((button) => {
+          button.classList.toggle('active', button.getAttribute('data-record-type') === state.recordType);
+        });
+
+        renderProjectTabs();
+        renderTable(project, records);
+        renderDetail(records);
+      }
+
+      document.addEventListener('click', (event) => {
+        const target = event.target.closest('[data-project-id], [data-record-type], [data-record-id]');
+        if (!target) return;
+
+        if (target.hasAttribute('data-project-id')) {
+          state.projectId = target.getAttribute('data-project-id');
+          state.selectedId = '';
+          render();
+          return;
+        }
+
+        if (target.hasAttribute('data-record-type')) {
+          state.recordType = target.getAttribute('data-record-type');
+          state.selectedId = '';
+          render();
+          return;
+        }
+
+        if (target.hasAttribute('data-record-id')) {
+          state.selectedId = target.getAttribute('data-record-id');
+          render();
+        }
+      });
+
+      render();
+    </script>
+  </body>
+</html>`;
+}
+
+function buildSnapshotHashPayload(snapshot: AppSnapshot) {
+  return {
+    version: snapshot.version,
+    activeProjectId: snapshot.activeProjectId,
+    projects: snapshot.projects,
+    sharedLibrary: snapshot.sharedLibrary ?? {
+      risks: [],
+      decisions: [],
+      riskSubscriptions: [],
+    },
+    registryIdentity: snapshot.registry
+      ? {
+          documentId: snapshot.registry.documentId,
+          name: snapshot.registry.name,
+        }
+      : null,
+  };
+}
+
+function computeSnapshotContentHash(snapshot: AppSnapshot) {
+  return hashStringFNV1a(stableSerialize(buildSnapshotHashPayload(snapshot)));
+}
+
+function snapshotHasMeaningfulContent(snapshot: AppSnapshot) {
+  const projectContent = snapshot.projects.some(
+    (project) =>
+      project.risks.length > 0 ||
+      project.decisions.length > 0 ||
+      project.name !== 'New Project' ||
+      project.description !== 'Blank workspace ready for your first risk and decision records.',
+  );
+  const sharedRiskCount = snapshot.sharedLibrary?.risks.length ?? 0;
+  const sharedDecisionCount = snapshot.sharedLibrary?.decisions.length ?? 0;
+  const subscriptionCount = snapshot.sharedLibrary?.riskSubscriptions?.length ?? 0;
+
+  return projectContent || sharedRiskCount > 0 || sharedDecisionCount > 0 || subscriptionCount > 0;
+}
+
+function normalizeRegistryMetadata(
+  input: Partial<RegistryMetadata> & Record<string, unknown>,
+): RegistryMetadata {
+  return {
+    documentId:
+      typeof input.documentId === 'string' && input.documentId.trim()
+        ? input.documentId
+        : createRegistryDocumentId(),
+    name: typeof input.name === 'string' && input.name.trim() ? input.name : 'Governance Register',
+    revision: typeof input.revision === 'number' && input.revision > 0 ? input.revision : 1,
+    contentHash: typeof input.contentHash === 'string' ? input.contentHash : '',
+    parentRevision:
+      typeof input.parentRevision === 'number' && input.parentRevision > 0 ? input.parentRevision : null,
+    parentContentHash:
+      typeof input.parentContentHash === 'string' && input.parentContentHash.trim()
+        ? input.parentContentHash
+        : null,
+    lastModifiedAt:
+      typeof input.lastModifiedAt === 'string' && input.lastModifiedAt ? input.lastModifiedAt : new Date().toISOString(),
+    lastModifiedBy:
+      typeof input.lastModifiedBy === 'string' && input.lastModifiedBy.trim()
+        ? input.lastModifiedBy
+        : 'Browser workspace',
+  };
+}
+
+function loadRecoveryDraft() {
+  if (typeof window === 'undefined') {
+    return null as RecoveryDraft | null;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(REGISTRY_DRAFT_STORAGE_KEY);
+    if (!stored) {
+      return null;
+    }
+
+    const parsed = JSON.parse(stored) as Partial<RecoveryDraft> & Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.savedAt !== 'string' || !parsed.snapshot) {
+      return null;
+    }
+
+    const snapshot = parseAppSnapshot(JSON.stringify(parsed.snapshot));
+    const rawSession =
+      parsed.session && typeof parsed.session === 'object'
+        ? (parsed.session as Partial<RegistrySession> & Record<string, unknown>)
+        : null;
+
+    return {
+      snapshot,
+      savedAt: parsed.savedAt,
+      session: {
+        sourceLabel: typeof rawSession?.sourceLabel === 'string' ? rawSession.sourceLabel : 'Recovery draft',
+        sourceFileName: typeof rawSession?.sourceFileName === 'string' ? rawSession.sourceFileName : '',
+        registryName:
+          typeof rawSession?.registryName === 'string'
+            ? rawSession.registryName
+            : snapshot.registry?.name ?? 'Governance Register',
+        baseDocumentId:
+          typeof rawSession?.baseDocumentId === 'string'
+            ? rawSession.baseDocumentId
+            : snapshot.registry?.documentId ?? null,
+        baseRevision:
+          typeof rawSession?.baseRevision === 'number'
+            ? rawSession.baseRevision
+            : snapshot.registry?.revision ?? null,
+        baseContentHash:
+          typeof rawSession?.baseContentHash === 'string'
+            ? rawSession.baseContentHash
+            : snapshot.registry?.contentHash ?? null,
+        loadedAt: typeof rawSession?.loadedAt === 'string' ? rawSession.loadedAt : parsed.savedAt,
+        lastPublishedAt: typeof rawSession?.lastPublishedAt === 'string' ? rawSession.lastPublishedAt : null,
+        lastPublishedRevision:
+          typeof rawSession?.lastPublishedRevision === 'number' ? rawSession.lastPublishedRevision : null,
+        status:
+          rawSession?.status === 'master_loaded_clean' ||
+          rawSession?.status === 'master_loaded_dirty' ||
+          rawSession?.status === 'publish_in_progress' ||
+          rawSession?.status === 'recovery_draft_available'
+            ? rawSession.status
+            : 'recovery_draft_available',
+        lastError: typeof rawSession?.lastError === 'string' ? rawSession.lastError : '',
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function loadEditorName() {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  try {
+    return window.localStorage.getItem(EDITOR_NAME_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
 
 function createBlankProject(overrides?: Partial<Project>): Project {
   return {
@@ -206,6 +1155,25 @@ function formatDisplayDate(value: string) {
     day: 'numeric',
     year: 'numeric',
   }).format(parsed);
+}
+
+function formatHistoryTimestamp(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(parsed);
+}
+
+function createHistoryEntry(label: string, meta: string, at = new Date().toISOString()): HistoryEntry {
+  return {label, meta, at};
 }
 
 function getSeverityFromAssessment(likelihood: number, impact: number): RiskSeverity {
@@ -621,6 +1589,44 @@ function formatSharedDecisionSequence(sequence: number) {
   return `SDC-${String(sequence).padStart(3, '0')}`;
 }
 
+function createOriginKey(prefix: 'risk' | 'decision') {
+  return `${prefix}-origin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function parseSharedRiskSubscriptionSequence(id: string) {
+  const match = id.trim().match(/^SRS-(\d+)$/i);
+  return match ? Number(match[1]) : null;
+}
+
+function formatSharedRiskSubscriptionSequence(sequence: number) {
+  return `SRS-${String(sequence).padStart(3, '0')}`;
+}
+
+function getSharedRiskChangeSummary(previous: SharedRisk, next: SharedRisk) {
+  const changes: string[] = [];
+  const track = <T,>(label: string, previousValue: T, nextValue: T) => {
+    if (previousValue !== nextValue) {
+      changes.push(label);
+    }
+  };
+
+  track('title changed', previous.title, next.title);
+  track('statement changed', previous.statement, next.statement);
+  track('trigger changed', previous.trigger, next.trigger);
+  track('consequence changed', previous.consequence, next.consequence);
+  track('status changed', previous.status, next.status);
+  track('owner changed', previous.owner, next.owner);
+  if (previous.upstreamLikelihood !== next.upstreamLikelihood) {
+    changes.push(`upstream likelihood changed from ${previous.upstreamLikelihood} to ${next.upstreamLikelihood}`);
+  }
+  if (previous.upstreamImpact !== next.upstreamImpact) {
+    changes.push(`upstream impact changed from ${previous.upstreamImpact} to ${next.upstreamImpact}`);
+  }
+  track('response summary changed', previous.responseSummary, next.responseSummary);
+
+  return changes;
+}
+
 function normalizeRiskRecord(input: Partial<Risk> & Record<string, unknown>): Risk {
   const likelihood = typeof input.likelihood === 'number' ? input.likelihood : 3;
   const impact = typeof input.impact === 'number' ? input.impact : 3;
@@ -630,7 +1636,19 @@ function normalizeRiskRecord(input: Partial<Risk> & Record<string, unknown>): Ri
 
   return {
     id: typeof input.id === 'string' ? input.id : formatRiskSequence(1),
+    originKey: typeof input.originKey === 'string' && input.originKey ? input.originKey : `legacy-risk-${typeof input.id === 'string' ? input.id : formatRiskSequence(1)}`,
     sharedRiskId: typeof input.sharedRiskId === 'string' ? input.sharedRiskId : undefined,
+    sharedRiskRole:
+      input.sharedRiskRole === 'source' || input.sharedRiskRole === 'linked' ? input.sharedRiskRole : undefined,
+    sharedParentVersionSeen: typeof input.sharedParentVersionSeen === 'number' ? input.sharedParentVersionSeen : null,
+    sharedReviewStatus:
+      input.sharedReviewStatus === 'current' ||
+      input.sharedReviewStatus === 'review_required' ||
+      input.sharedReviewStatus === 'reviewed_no_change' ||
+      input.sharedReviewStatus === 'updated_after_review'
+        ? input.sharedReviewStatus
+        : undefined,
+    sharedOverrideRationale: typeof input.sharedOverrideRationale === 'string' ? input.sharedOverrideRationale : '',
     title: typeof input.title === 'string' ? input.title : 'Untitled Risk',
     statement:
       typeof input.statement === 'string' && input.statement.trim()
@@ -679,10 +1697,11 @@ function normalizeRiskRecord(input: Partial<Risk> & Record<string, unknown>): Ri
               ? {
                   label: typeof entry.label === 'string' ? entry.label : 'Updated',
                   meta: typeof entry.meta === 'string' ? entry.meta : 'Local edit',
+                  at: typeof entry.at === 'string' ? entry.at : undefined,
                 }
               : null,
           )
-          .filter((entry): entry is {label: string; meta: string} => entry != null)
+          .filter(Boolean) as HistoryEntry[]
       : [],
   };
 }
@@ -780,6 +1799,7 @@ function normalizeSharedRiskRecord(input: Partial<SharedRisk> & Record<string, u
   const consequence = typeof input.consequence === 'string' ? input.consequence : '';
   return {
     id: typeof input.id === 'string' ? input.id : formatSharedRiskSequence(1),
+    referenceCode: typeof input.referenceCode === 'string' && input.referenceCode ? input.referenceCode : typeof input.id === 'string' ? input.id : formatSharedRiskSequence(1),
     title: typeof input.title === 'string' ? input.title : 'Untitled Shared Risk',
     statement:
       typeof input.statement === 'string' && input.statement.trim()
@@ -787,7 +1807,23 @@ function normalizeSharedRiskRecord(input: Partial<SharedRisk> & Record<string, u
         : buildRiskStatement(trigger, consequence),
     trigger,
     consequence,
+    status:
+      input.status === 'Pending' ||
+      input.status === 'Active' ||
+      input.status === 'Monitoring' ||
+      input.status === 'Rejected' ||
+      input.status === 'Closed'
+        ? input.status
+        : 'Pending',
+    owner: typeof input.owner === 'string' ? input.owner : '',
+    upstreamLikelihood: typeof input.upstreamLikelihood === 'number' ? input.upstreamLikelihood : 3,
+    upstreamImpact: typeof input.upstreamImpact === 'number' ? input.upstreamImpact : 3,
+    responseSummary: typeof input.responseSummary === 'string' ? input.responseSummary : '',
     sourceImpactScore: typeof input.sourceImpactScore === 'number' ? input.sourceImpactScore : 3,
+    sourceOriginRiskKey:
+      typeof input.sourceOriginRiskKey === 'string' && input.sourceOriginRiskKey
+        ? input.sourceOriginRiskKey
+        : `legacy-risk-${typeof input.referenceCode === 'string' ? input.referenceCode : typeof input.id === 'string' ? input.id : '1'}`,
     sharedImpactProfile:
       input.sharedImpactProfile &&
       typeof input.sharedImpactProfile === 'object' &&
@@ -800,8 +1836,57 @@ function normalizeSharedRiskRecord(input: Partial<SharedRisk> & Record<string, u
             sourceScore: input.sharedImpactProfile.sourceScore,
           }
         : undefined,
+    versionNumber: typeof input.versionNumber === 'number' && input.versionNumber > 0 ? input.versionNumber : 1,
+    createdAt: typeof input.createdAt === 'string' ? input.createdAt : typeof input.updatedAt === 'string' ? input.updatedAt : new Date().toISOString(),
     updatedAt: typeof input.updatedAt === 'string' ? input.updatedAt : new Date().toISOString(),
+    sharedAt: typeof input.sharedAt === 'string' ? input.sharedAt : typeof input.updatedAt === 'string' ? input.updatedAt : new Date().toISOString(),
     sourceProjectId: typeof input.sourceProjectId === 'string' ? input.sourceProjectId : '',
+    isArchived: typeof input.isArchived === 'boolean' ? input.isArchived : false,
+    lastChangeSummary: Array.isArray(input.lastChangeSummary)
+      ? input.lastChangeSummary.filter((entry): entry is string => typeof entry === 'string')
+      : [],
+    history: Array.isArray(input.history)
+      ? input.history
+          .map((entry) =>
+            entry && typeof entry === 'object'
+              ? {
+                  label: typeof entry.label === 'string' ? entry.label : 'Updated',
+                  meta: typeof entry.meta === 'string' ? entry.meta : 'Local edit',
+                  at: typeof entry.at === 'string' ? entry.at : undefined,
+                }
+              : null,
+          )
+          .filter(Boolean) as HistoryEntry[]
+      : [],
+  };
+}
+
+function normalizeSharedRiskSubscriptionRecord(
+  input: Partial<SharedRiskSubscription> & Record<string, unknown>,
+): SharedRiskSubscription {
+  return {
+    id: typeof input.id === 'string' ? input.id : formatSharedRiskSubscriptionSequence(1),
+    sharedRiskId: typeof input.sharedRiskId === 'string' ? input.sharedRiskId : '',
+    projectId: typeof input.projectId === 'string' ? input.projectId : '',
+    state:
+      input.state === 'watching' ||
+      input.state === 'linked' ||
+      input.state === 'review_required' ||
+      input.state === 'not_applicable'
+        ? input.state
+        : 'watching',
+    createdAt: typeof input.createdAt === 'string' ? input.createdAt : new Date().toISOString(),
+    updatedAt: typeof input.updatedAt === 'string' ? input.updatedAt : new Date().toISOString(),
+    lastSeenSharedRiskVersion:
+      typeof input.lastSeenSharedRiskVersion === 'number' && input.lastSeenSharedRiskVersion > 0
+        ? input.lastSeenSharedRiskVersion
+        : 1,
+    lastReviewedSharedRiskVersion:
+      typeof input.lastReviewedSharedRiskVersion === 'number' ? input.lastReviewedSharedRiskVersion : null,
+    lastReviewedAt: typeof input.lastReviewedAt === 'string' ? input.lastReviewedAt : '',
+    reviewedByName: typeof input.reviewedByName === 'string' ? input.reviewedByName : '',
+    reviewComment: typeof input.reviewComment === 'string' ? input.reviewComment : '',
+    linkedLocalRiskId: typeof input.linkedLocalRiskId === 'string' && input.linkedLocalRiskId ? input.linkedLocalRiskId : null,
   };
 }
 
@@ -844,25 +1929,148 @@ function normalizeProjectRecord(input: Project): Project {
   };
 }
 
+function reconcileSharedRiskState(
+  projects: Project[],
+  sharedRisks: SharedRisk[],
+  subscriptions: SharedRiskSubscription[],
+) {
+  const sharedRiskMap = new Map(sharedRisks.map((risk) => [risk.id, risk]));
+  const subscriptionMap = new Map<string, SharedRiskSubscription>();
+  let nextSubscriptionSequence =
+    subscriptions.reduce((highest, subscription) => Math.max(highest, parseSharedRiskSubscriptionSequence(subscription.id) ?? 0), 0) + 1;
+
+  const putSubscription = (subscription: SharedRiskSubscription) => {
+    subscriptionMap.set(`${subscription.sharedRiskId}::${subscription.projectId}`, subscription);
+  };
+
+  subscriptions.forEach((subscription) => putSubscription(subscription));
+
+  const normalizedProjects = projects.map((project) => ({
+    ...project,
+    risks: project.risks.map((risk) => {
+      if (!risk.sharedRiskId) {
+        return risk;
+      }
+
+      const sharedRisk = sharedRiskMap.get(risk.sharedRiskId);
+      if (!sharedRisk) {
+        return {...risk, sharedRiskId: undefined, sharedRiskRole: undefined, sharedParentVersionSeen: null};
+      }
+
+      if (project.id === sharedRisk.sourceProjectId) {
+        return {
+          ...risk,
+          sharedRiskRole: 'source' as const,
+          sharedParentVersionSeen: sharedRisk.versionNumber,
+          sharedReviewStatus: 'current' as const,
+        };
+      }
+
+      const normalizedRisk = {
+        ...risk,
+        sharedRiskRole: 'linked' as const,
+        sharedParentVersionSeen: risk.sharedParentVersionSeen ?? sharedRisk.versionNumber,
+        sharedReviewStatus: risk.sharedReviewStatus ?? 'current',
+      };
+
+      const existingSubscription = subscriptionMap.get(`${sharedRisk.id}::${project.id}`);
+      const linkedState: SharedRiskSubscriptionState =
+        existingSubscription?.state === 'review_required' || existingSubscription?.state === 'not_applicable'
+          ? existingSubscription.state
+          : 'linked';
+      putSubscription(
+        normalizeSharedRiskSubscriptionRecord({
+          id: existingSubscription?.id ?? formatSharedRiskSubscriptionSequence(nextSubscriptionSequence++),
+          sharedRiskId: sharedRisk.id,
+          projectId: project.id,
+          state: linkedState,
+          createdAt: existingSubscription?.createdAt ?? new Date().toISOString(),
+          updatedAt: existingSubscription?.updatedAt ?? new Date().toISOString(),
+          lastSeenSharedRiskVersion: existingSubscription?.lastSeenSharedRiskVersion ?? sharedRisk.versionNumber,
+          lastReviewedSharedRiskVersion:
+            existingSubscription?.lastReviewedSharedRiskVersion ?? normalizedRisk.sharedParentVersionSeen ?? sharedRisk.versionNumber,
+          lastReviewedAt: existingSubscription?.lastReviewedAt ?? '',
+          reviewedByName: existingSubscription?.reviewedByName ?? '',
+          reviewComment: existingSubscription?.reviewComment ?? '',
+          linkedLocalRiskId: normalizedRisk.id,
+        }),
+      );
+
+      return normalizedRisk;
+    }),
+  }));
+
+  const normalizedSharedRisks = sharedRisks.map((sharedRisk) => {
+    const sourceProject = normalizedProjects.find((project) => project.id === sharedRisk.sourceProjectId);
+    const sourceRisk =
+      sourceProject?.risks.find(
+        (risk) =>
+          risk.sharedRiskId === sharedRisk.id &&
+          (risk.originKey === sharedRisk.sourceOriginRiskKey || !sharedRisk.sourceOriginRiskKey),
+      ) ?? sourceProject?.risks.find((risk) => risk.sharedRiskId === sharedRisk.id);
+
+    return {
+      ...sharedRisk,
+      sourceOriginRiskKey: sourceRisk?.originKey ?? sharedRisk.sourceOriginRiskKey,
+      referenceCode: sourceRisk?.id ?? sharedRisk.referenceCode,
+      upstreamLikelihood: sourceRisk?.likelihood ?? sharedRisk.upstreamLikelihood,
+      upstreamImpact: sourceRisk?.impact ?? sharedRisk.upstreamImpact,
+      status: sourceRisk?.status ?? sharedRisk.status,
+      owner: sourceRisk?.owner ?? sharedRisk.owner,
+      responseSummary: sourceRisk?.mitigation ?? sharedRisk.responseSummary,
+    };
+  });
+
+  return {
+    projects: normalizedProjects,
+    sharedRisks: normalizedSharedRisks,
+    sharedRiskSubscriptions: Array.from(subscriptionMap.values()),
+  };
+}
+
 function buildAppSnapshot(
   projects: Project[],
   activeProjectId: string,
   sharedRisks: SharedRisk[],
+  sharedRiskSubscriptions: SharedRiskSubscription[],
   sharedDecisions: SharedDecision[],
+  registryOverrides?: Partial<RegistryMetadata>,
 ): AppSnapshot {
-  return {
+  const registry = normalizeRegistryMetadata({
+    documentId: registryOverrides?.documentId,
+    name: registryOverrides?.name,
+    revision: registryOverrides?.revision,
+    parentRevision: registryOverrides?.parentRevision,
+    parentContentHash: registryOverrides?.parentContentHash,
+    lastModifiedAt: registryOverrides?.lastModifiedAt,
+    lastModifiedBy: registryOverrides?.lastModifiedBy,
+    contentHash: '',
+  });
+
+  const snapshot: AppSnapshot = {
     version: APP_SNAPSHOT_VERSION,
     exportedAt: new Date().toISOString(),
+    registry,
     activeProjectId,
     projects,
     sharedLibrary: {
       risks: sharedRisks,
+      riskSubscriptions: sharedRiskSubscriptions,
       decisions: sharedDecisions,
     },
   };
+
+  snapshot.registry = {
+    ...registry,
+    contentHash: computeSnapshotContentHash(snapshot),
+  };
+
+  return snapshot;
 }
 
-function parseAppSnapshot(source: string): AppSnapshot & {sharedLibrary: {risks: SharedRisk[]; decisions: SharedDecision[]}} {
+function parseAppSnapshot(
+  source: string,
+): AppSnapshot & {sharedLibrary: {risks: SharedRisk[]; decisions: SharedDecision[]; riskSubscriptions: SharedRiskSubscription[]}} {
   let parsed: unknown;
 
   try {
@@ -885,26 +2093,54 @@ function parseAppSnapshot(source: string): AppSnapshot & {sharedLibrary: {risks:
     typeof raw.activeProjectId === 'string' && projects.some((project) => project.id === raw.activeProjectId)
       ? raw.activeProjectId
       : projects[0].id;
+  const sharedLibrary = {
+    risks:
+      raw.sharedLibrary && typeof raw.sharedLibrary === 'object' && Array.isArray(raw.sharedLibrary.risks)
+        ? raw.sharedLibrary.risks.map((risk) =>
+            normalizeSharedRiskRecord(risk as Partial<SharedRisk> & Record<string, unknown>),
+          )
+        : [],
+    riskSubscriptions:
+      raw.sharedLibrary && typeof raw.sharedLibrary === 'object' && Array.isArray(raw.sharedLibrary.riskSubscriptions)
+        ? raw.sharedLibrary.riskSubscriptions.map((subscription) =>
+            normalizeSharedRiskSubscriptionRecord(
+              subscription as Partial<SharedRiskSubscription> & Record<string, unknown>,
+            ),
+          )
+        : [],
+    decisions:
+      raw.sharedLibrary && typeof raw.sharedLibrary === 'object' && Array.isArray(raw.sharedLibrary.decisions)
+        ? raw.sharedLibrary.decisions.map((decision) =>
+            normalizeSharedDecisionRecord(decision as Partial<SharedDecision> & Record<string, unknown>),
+          )
+        : [],
+  };
+  const normalizedRegistry = raw.registry && typeof raw.registry === 'object'
+    ? normalizeRegistryMetadata(raw.registry as Partial<RegistryMetadata> & Record<string, unknown>)
+    : normalizeRegistryMetadata({});
+  const normalizedSnapshotBase: AppSnapshot = {
+    version: typeof raw.version === 'string' ? raw.version : APP_SNAPSHOT_VERSION,
+    exportedAt: typeof raw.exportedAt === 'string' ? raw.exportedAt : new Date().toISOString(),
+    registry: {
+      ...normalizedRegistry,
+      contentHash: '',
+    },
+    activeProjectId,
+    projects,
+    sharedLibrary,
+  };
+  const normalizedContentHash = computeSnapshotContentHash(normalizedSnapshotBase);
 
   return {
     version: typeof raw.version === 'string' ? raw.version : APP_SNAPSHOT_VERSION,
     exportedAt: typeof raw.exportedAt === 'string' ? raw.exportedAt : new Date().toISOString(),
+    registry: {
+      ...normalizedRegistry,
+      contentHash: normalizedContentHash,
+    },
     activeProjectId,
     projects,
-    sharedLibrary: {
-      risks:
-        raw.sharedLibrary && typeof raw.sharedLibrary === 'object' && Array.isArray(raw.sharedLibrary.risks)
-          ? raw.sharedLibrary.risks.map((risk) =>
-              normalizeSharedRiskRecord(risk as Partial<SharedRisk> & Record<string, unknown>),
-            )
-          : [],
-      decisions:
-        raw.sharedLibrary && typeof raw.sharedLibrary === 'object' && Array.isArray(raw.sharedLibrary.decisions)
-          ? raw.sharedLibrary.decisions.map((decision) =>
-              normalizeSharedDecisionRecord(decision as Partial<SharedDecision> & Record<string, unknown>),
-            )
-          : [],
-    },
+    sharedLibrary,
   };
 }
 
@@ -1015,6 +2251,21 @@ function loadSharedRisks() {
   }
 }
 
+function loadSharedRiskSubscriptions() {
+  if (typeof window === 'undefined') return [] as SharedRiskSubscription[];
+  try {
+    const stored = window.localStorage.getItem(SHARED_RISK_SUBSCRIPTIONS_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored) as SharedRiskSubscription[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((subscription) =>
+      normalizeSharedRiskSubscriptionRecord(subscription as Partial<SharedRiskSubscription> & Record<string, unknown>),
+    );
+  } catch {
+    return [];
+  }
+}
+
 function loadSharedDecisions() {
   if (typeof window === 'undefined') return [] as SharedDecision[];
   try {
@@ -1110,22 +2361,48 @@ function normalizeOptions(options: string[] | SelectOption[]): SelectOption[] {
 }
 
 export default function App() {
-  const [projects, setProjects] = useState<Project[]>(() => loadProjects());
-  const [sharedRisks, setSharedRisks] = useState<SharedRisk[]>(() => loadSharedRisks());
-  const [sharedDecisions, setSharedDecisions] = useState<SharedDecision[]>(() => loadSharedDecisions());
-  const [activeProjectId, setActiveProjectId] = useState<string>(() => {
-    const loadedProjects = loadProjects();
-    return loadActiveProjectId(loadedProjects);
-  });
-  const [view, setView] = useState<View>('risk');
+  const initialProjectsState = initialProjects;
+  const initialSharedRisksState: SharedRisk[] = [];
+  const initialSharedRiskSubscriptionsState: SharedRiskSubscription[] = [];
+  const initialReconciledState = reconcileSharedRiskState(
+    initialProjectsState,
+    initialSharedRisksState,
+    initialSharedRiskSubscriptionsState,
+  );
+
+  const [projects, setProjects] = useState<Project[]>(() => initialReconciledState.projects);
+  const [sharedRisks, setSharedRisks] = useState<SharedRisk[]>(() => initialReconciledState.sharedRisks);
+  const [sharedRiskSubscriptions, setSharedRiskSubscriptions] = useState<SharedRiskSubscription[]>(
+    () => initialReconciledState.sharedRiskSubscriptions,
+  );
+  const [sharedDecisions, setSharedDecisions] = useState<SharedDecision[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string>(() => initialReconciledState.projects[0].id);
+  const [view, setView] = useState<View>('snapshot');
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sharedRiskDrawerOpen, setSharedRiskDrawerOpen] = useState(false);
   const [createRiskOpen, setCreateRiskOpen] = useState(false);
   const [createDecisionOpen, setCreateDecisionOpen] = useState(false);
+  const [editorName, setEditorName] = useState<string>(() => loadEditorName());
+  const [registrySession, setRegistrySession] = useState<RegistrySession>(() => ({
+    sourceLabel: 'Local browser draft',
+    sourceFileName: '',
+    registryName: 'Governance Register',
+    baseDocumentId: null,
+    baseRevision: null,
+    baseContentHash: null,
+    loadedAt: null,
+    lastPublishedAt: null,
+    lastPublishedRevision: null,
+    status: 'no_registry_loaded',
+    lastError: '',
+  }));
+  const [recoveryDraft, setRecoveryDraft] = useState<RecoveryDraft | null>(() => loadRecoveryDraft());
 
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? projects[0];
   const riskRecords = activeProject.risks;
   const decisions = activeProject.decisions;
   const [selectedRiskId, setSelectedRiskId] = useState<string>(() => riskRecords[0]?.id ?? '');
+  const [selectedSharedRiskId, setSelectedSharedRiskId] = useState<string>('');
   const [selectedDecisionId, setSelectedDecisionId] = useState<string>(() => decisions[0]?.id ?? '');
   const riskScoringModel = activeProject.scoringModel;
   const usedRiskIds = riskRecords.map((risk) => risk.id.toUpperCase());
@@ -1138,27 +2415,174 @@ export default function App() {
     1;
   const nextSharedRiskSequence =
     sharedRisks.reduce((highest, risk) => Math.max(highest, parseSharedRiskSequence(risk.id) ?? 0), 0) + 1;
+  const nextSharedRiskSubscriptionSequence =
+    sharedRiskSubscriptions.reduce(
+      (highest, subscription) => Math.max(highest, parseSharedRiskSubscriptionSequence(subscription.id) ?? 0),
+      0,
+    ) + 1;
   const nextSharedDecisionSequence =
     sharedDecisions.reduce((highest, decision) => Math.max(highest, parseSharedDecisionSequence(decision.id) ?? 0), 0) + 1;
 
   const selectedRisk = riskRecords.find((risk) => risk.id === selectedRiskId) ?? riskRecords[0] ?? null;
+  const activeProjectSharedRiskSubscriptions = sharedRiskSubscriptions.filter(
+    (subscription) => subscription.projectId === activeProject.id,
+  );
+  const selectedSharedRiskSubscription =
+    activeProjectSharedRiskSubscriptions.find((subscription) => subscription.sharedRiskId === selectedSharedRiskId) ??
+    activeProjectSharedRiskSubscriptions[0] ??
+    null;
+  const selectedSharedRisk =
+    (selectedSharedRiskSubscription
+      ? sharedRisks.find((sharedRisk) => sharedRisk.id === selectedSharedRiskSubscription.sharedRiskId)
+      : null) ?? null;
   const selectedDecision = decisions.find((d) => d.id === selectedDecisionId) ?? decisions[0] ?? null;
+  const boardLoaded = Boolean(registrySession.baseDocumentId);
+  const workingSnapshot = buildAppSnapshot(
+    projects,
+    activeProjectId,
+    sharedRisks,
+    sharedRiskSubscriptions,
+    sharedDecisions,
+    {
+      documentId: registrySession.baseDocumentId ?? recoveryDraft?.snapshot.registry?.documentId,
+      name:
+        registrySession.registryName ||
+        recoveryDraft?.snapshot.registry?.name ||
+        'Governance Register',
+      revision: registrySession.baseRevision ?? recoveryDraft?.snapshot.registry?.revision ?? 1,
+      parentRevision: recoveryDraft?.snapshot.registry?.parentRevision ?? null,
+      parentContentHash: recoveryDraft?.snapshot.registry?.parentContentHash ?? null,
+      lastModifiedAt: registrySession.lastPublishedAt ?? registrySession.loadedAt ?? new Date().toISOString(),
+      lastModifiedBy: 'Browser workspace',
+    },
+  );
+  const hasUnsavedChanges =
+    Boolean(registrySession.baseContentHash) && workingSnapshot.registry?.contentHash !== registrySession.baseContentHash;
 
   useEffect(() => {
-    window.localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects));
-  }, [projects]);
+    window.localStorage.removeItem(PROJECTS_STORAGE_KEY);
+    window.localStorage.removeItem(ACTIVE_PROJECT_ID_KEY);
+    window.localStorage.removeItem(SHARED_RISKS_STORAGE_KEY);
+    window.localStorage.removeItem(SHARED_RISK_SUBSCRIPTIONS_STORAGE_KEY);
+    window.localStorage.removeItem(SHARED_DECISIONS_STORAGE_KEY);
+  }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(ACTIVE_PROJECT_ID_KEY, activeProjectId);
-  }, [activeProjectId]);
+    window.localStorage.setItem(EDITOR_NAME_STORAGE_KEY, editorName);
+  }, [editorName]);
 
   useEffect(() => {
-    window.localStorage.setItem(SHARED_RISKS_STORAGE_KEY, JSON.stringify(sharedRisks));
-  }, [sharedRisks]);
+    setRegistrySession((current) => {
+      const nextStatus =
+        current.baseDocumentId
+          ? hasUnsavedChanges
+            ? 'master_loaded_dirty'
+            : 'master_loaded_clean'
+          : recoveryDraft
+            ? 'recovery_draft_available'
+            : 'no_registry_loaded';
+
+      if (current.status === nextStatus) {
+        return current;
+      }
+
+      return {
+        ...current,
+        status: nextStatus,
+      };
+    });
+  }, [hasUnsavedChanges, recoveryDraft]);
 
   useEffect(() => {
-    window.localStorage.setItem(SHARED_DECISIONS_STORAGE_KEY, JSON.stringify(sharedDecisions));
-  }, [sharedDecisions]);
+    if (!boardLoaded && view !== 'snapshot') {
+      setView('snapshot');
+    }
+  }, [boardLoaded, view]);
+
+  useEffect(() => {
+    const draftSnapshot = buildAppSnapshot(
+      projects,
+      activeProjectId,
+      sharedRisks,
+      sharedRiskSubscriptions,
+      sharedDecisions,
+      {
+        documentId: registrySession.baseDocumentId ?? workingSnapshot.registry?.documentId,
+        name: registrySession.registryName || workingSnapshot.registry?.name || 'Governance Register',
+        revision: registrySession.baseRevision ?? workingSnapshot.registry?.revision ?? 1,
+        parentRevision: registrySession.baseRevision,
+        parentContentHash: registrySession.baseContentHash,
+        lastModifiedAt: new Date().toISOString(),
+        lastModifiedBy: 'Browser draft autosave',
+      },
+    );
+    const shouldSaveDraft = Boolean(registrySession.baseDocumentId) || snapshotHasMeaningfulContent(draftSnapshot);
+    if (!shouldSaveDraft) {
+      window.localStorage.removeItem(REGISTRY_DRAFT_STORAGE_KEY);
+      setRecoveryDraft(null);
+      return;
+    }
+    const nextDraft: RecoveryDraft = {
+      snapshot: draftSnapshot,
+      session: {
+        ...registrySession,
+        status: hasUnsavedChanges ? 'master_loaded_dirty' : registrySession.status,
+      },
+      savedAt: new Date().toISOString(),
+    };
+    window.localStorage.setItem(REGISTRY_DRAFT_STORAGE_KEY, JSON.stringify(nextDraft));
+    setRecoveryDraft(nextDraft);
+  }, [
+    activeProjectId,
+    hasUnsavedChanges,
+    projects,
+    registrySession,
+    sharedDecisions,
+    sharedRiskSubscriptions,
+    sharedRisks,
+    workingSnapshot.registry?.documentId,
+    workingSnapshot.registry?.name,
+    workingSnapshot.registry?.revision,
+  ]);
+
+  function applySnapshotToWorkspace(
+    snapshot: AppSnapshot,
+    sessionOverrides?: Partial<RegistrySession>,
+  ) {
+    const reconciled = reconcileSharedRiskState(
+      snapshot.projects,
+      snapshot.sharedLibrary?.risks ?? [],
+      snapshot.sharedLibrary?.riskSubscriptions ?? [],
+    );
+    const nextActiveProject =
+      reconciled.projects.find((project) => project.id === snapshot.activeProjectId) ?? reconciled.projects[0];
+
+    setProjects(reconciled.projects);
+    setSharedRisks(reconciled.sharedRisks);
+    setSharedRiskSubscriptions(reconciled.sharedRiskSubscriptions);
+    setSharedDecisions(snapshot.sharedLibrary?.decisions ?? []);
+    setActiveProjectId(nextActiveProject.id);
+    setSelectedRiskId(nextActiveProject.risks[0]?.id ?? '');
+    setSelectedSharedRiskId('');
+    setSelectedDecisionId(nextActiveProject.decisions[0]?.id ?? '');
+    setDrawerOpen(false);
+    setSharedRiskDrawerOpen(false);
+    setCreateRiskOpen(false);
+    setCreateDecisionOpen(false);
+    setRegistrySession({
+      sourceLabel: sessionOverrides?.sourceLabel ?? 'Opened master registry',
+      sourceFileName: sessionOverrides?.sourceFileName ?? '',
+      registryName: sessionOverrides?.registryName ?? snapshot.registry?.name ?? 'Governance Register',
+      baseDocumentId: sessionOverrides?.baseDocumentId ?? snapshot.registry?.documentId ?? null,
+      baseRevision: sessionOverrides?.baseRevision ?? snapshot.registry?.revision ?? null,
+      baseContentHash: sessionOverrides?.baseContentHash ?? snapshot.registry?.contentHash ?? null,
+      loadedAt: sessionOverrides?.loadedAt ?? new Date().toISOString(),
+      lastPublishedAt: sessionOverrides?.lastPublishedAt ?? null,
+      lastPublishedRevision: sessionOverrides?.lastPublishedRevision ?? null,
+      status: sessionOverrides?.status ?? 'master_loaded_clean',
+      lastError: sessionOverrides?.lastError ?? '',
+    });
+  }
 
   function updateActiveProject(updater: (project: Project) => Project) {
     setProjects((prev) => prev.map((p) => (p.id === activeProjectId ? updater(p) : p)));
@@ -1169,8 +2593,10 @@ export default function App() {
     if (!next) return;
     setActiveProjectId(projectId);
     setSelectedRiskId(next.risks[0]?.id ?? '');
+    setSelectedSharedRiskId('');
     setSelectedDecisionId(next.decisions[0]?.id ?? '');
     setDrawerOpen(false);
+    setSharedRiskDrawerOpen(false);
     setCreateRiskOpen(false);
   }
 
@@ -1183,8 +2609,10 @@ export default function App() {
     setProjects((prev) => [...prev, newProject]);
     setActiveProjectId(newProject.id);
     setSelectedRiskId('');
+    setSelectedSharedRiskId('');
     setSelectedDecisionId('');
     setDrawerOpen(false);
+    setSharedRiskDrawerOpen(false);
     setCreateRiskOpen(false);
   }
 
@@ -1196,8 +2624,10 @@ export default function App() {
         const replacementProject = createBlankProject({scoringModel: defaultRiskScoringModel});
         setActiveProjectId(replacementProject.id);
         setSelectedRiskId('');
+        setSelectedSharedRiskId('');
         setSelectedDecisionId('');
         setDrawerOpen(false);
+        setSharedRiskDrawerOpen(false);
         setCreateRiskOpen(false);
         setCreateDecisionOpen(false);
         return [replacementProject];
@@ -1207,8 +2637,10 @@ export default function App() {
         const nextProject = remainingProjects[0];
         setActiveProjectId(nextProject.id);
         setSelectedRiskId(nextProject.risks[0]?.id ?? '');
+        setSelectedSharedRiskId('');
         setSelectedDecisionId(nextProject.decisions[0]?.id ?? '');
         setDrawerOpen(false);
+        setSharedRiskDrawerOpen(false);
         setCreateRiskOpen(false);
         setCreateDecisionOpen(false);
       }
@@ -1220,6 +2652,28 @@ export default function App() {
   function handleRiskSelect(riskId: string) {
     setSelectedRiskId(riskId);
     setDrawerOpen(true);
+    setSharedRiskDrawerOpen(false);
+  }
+
+  function handleOpenRiskInProject(projectId: string, riskId: string) {
+    const project = projects.find((item) => item.id === projectId);
+    if (!project) {
+      return;
+    }
+
+    setActiveProjectId(projectId);
+    setSelectedRiskId(riskId);
+    setSelectedSharedRiskId('');
+    setSelectedDecisionId(project.decisions[0]?.id ?? '');
+    setView('risk');
+    setSharedRiskDrawerOpen(false);
+    setDrawerOpen(true);
+  }
+
+  function handleSharedRiskSelect(sharedRiskId: string) {
+    setSelectedSharedRiskId(sharedRiskId);
+    setSharedRiskDrawerOpen(true);
+    setDrawerOpen(false);
   }
 
   function handleSelectDecision(decisionId: string) {
@@ -1227,7 +2681,89 @@ export default function App() {
     setView('decision');
   }
 
+  function buildSharedRiskFromSourceRisk(sourceRisk: Risk, existingSharedRisk?: SharedRisk | null): SharedRisk {
+    const base: SharedRisk =
+      existingSharedRisk ?? {
+        id: sourceRisk.sharedRiskId ?? formatSharedRiskSequence(nextSharedRiskSequence),
+        referenceCode: sourceRisk.id,
+        title: sourceRisk.title,
+        statement: sourceRisk.statement,
+        trigger: sourceRisk.trigger,
+        consequence: sourceRisk.consequence,
+        status: sourceRisk.status,
+        owner: sourceRisk.owner,
+        upstreamLikelihood: sourceRisk.likelihood,
+        upstreamImpact: sourceRisk.impact,
+        responseSummary: sourceRisk.mitigation,
+        sourceImpactScore: sourceRisk.impact,
+        sourceOriginRiskKey: sourceRisk.originKey,
+        sharedImpactProfile:
+          getImpactTranslationProfile(
+            getScoreDefinition(activeProject.scoringModel.impact, sourceRisk.impact) ??
+              activeProject.scoringModel.impact[sourceRisk.impact - 1],
+          ) ?? undefined,
+        versionNumber: 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        sharedAt: new Date().toISOString(),
+        sourceProjectId: activeProject.id,
+        isArchived: false,
+        lastChangeSummary: [],
+        history: [],
+      };
+
+    const nextSharedRisk: SharedRisk = {
+      ...base,
+      referenceCode: sourceRisk.id,
+      title: sourceRisk.title,
+      statement: sourceRisk.statement,
+      trigger: sourceRisk.trigger,
+      consequence: sourceRisk.consequence,
+      status: sourceRisk.status,
+      owner: sourceRisk.owner,
+      upstreamLikelihood: sourceRisk.likelihood,
+      upstreamImpact: sourceRisk.impact,
+      responseSummary: sourceRisk.mitigation,
+      sourceImpactScore: sourceRisk.impact,
+      sourceOriginRiskKey: sourceRisk.originKey,
+      sharedImpactProfile:
+        getImpactTranslationProfile(
+          getScoreDefinition(activeProject.scoringModel.impact, sourceRisk.impact) ??
+            activeProject.scoringModel.impact[sourceRisk.impact - 1],
+        ) ?? undefined,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const changeSummary = existingSharedRisk ? getSharedRiskChangeSummary(existingSharedRisk, nextSharedRisk) : ['published from source project'];
+
+    if (!existingSharedRisk) {
+      return {
+        ...nextSharedRisk,
+        versionNumber: 1,
+        lastChangeSummary: changeSummary,
+        history: [createHistoryEntry('Shared risk published', 'Source project')],
+      };
+    }
+
+    if (changeSummary.length === 0) {
+      return existingSharedRisk;
+    }
+
+    return {
+      ...nextSharedRisk,
+      versionNumber: existingSharedRisk.versionNumber + 1,
+      lastChangeSummary: changeSummary,
+      history: [
+        createHistoryEntry(`Shared risk updated to v${existingSharedRisk.versionNumber + 1}`, changeSummary.join(' • ')),
+        ...existingSharedRisk.history,
+      ],
+    };
+  }
+
   function handleUpdateRisk(riskId: string, updates: Partial<Risk>, historyLabel: string) {
+    const currentRisk = riskRecords.find((risk) => risk.id === riskId);
+    const currentSharedRisk =
+      currentRisk?.sharedRiskId ? sharedRisks.find((sharedRisk) => sharedRisk.id === currentRisk.sharedRiskId) ?? null : null;
     updateActiveProject((project) => ({
       ...project,
       risks: project.risks.map((risk) => {
@@ -1251,67 +2787,68 @@ export default function App() {
 
         return {
           ...nextRisk,
-          lastUpdated: 'Just now',
-          history: [{label: historyLabel, meta: 'Local edit • Just now'}, ...risk.history],
+          lastUpdated: new Date().toISOString(),
+          history: [createHistoryEntry(historyLabel, 'Local edit'), ...risk.history],
         };
       }),
     }));
-  }
 
-  function handleSyncSharedRiskDescription(
-    riskId: string,
-    updates: Pick<Risk, 'trigger' | 'consequence' | 'statement'>,
-    historyLabel: string,
-  ) {
-    const localRisk = riskRecords.find((risk) => risk.id === riskId);
-    if (!localRisk?.sharedRiskId) {
-      handleUpdateRisk(riskId, updates, historyLabel);
+    if (!currentRisk || !currentRisk.sharedRiskId || currentRisk.sharedRiskRole !== 'source' || !currentSharedRisk) {
       return;
     }
 
-    const syncedStatement = normalizeRiskStatement(
-      updates.statement || buildRiskStatement(updates.trigger, updates.consequence),
-    );
-    const syncedTrigger = updates.trigger.trim();
-    const syncedConsequence = updates.consequence.trim();
-    const sharedRiskId = localRisk.sharedRiskId;
-    const updatedSharedRisk: SharedRisk = {
-      id: sharedRiskId,
-      title: localRisk.title,
-      statement: syncedStatement,
-      trigger: syncedTrigger,
-      consequence: syncedConsequence,
-      sourceImpactScore: localRisk.impact,
-      sharedImpactProfile: getImpactTranslationProfile(
-        getScoreDefinition(activeProject.scoringModel.impact, localRisk.impact) ??
-          activeProject.scoringModel.impact[localRisk.impact - 1],
-      ) ?? undefined,
-      updatedAt: new Date().toISOString(),
-      sourceProjectId: activeProject.id,
+    const nextRisk = {
+      ...currentRisk,
+      ...updates,
     };
+    if (updates.trigger !== undefined || updates.consequence !== undefined) {
+      nextRisk.statement = buildRiskStatement(nextRisk.trigger, nextRisk.consequence, nextRisk.resultingIn);
+    }
+    if (updates.statement !== undefined) {
+      nextRisk.statement = normalizeRiskStatement(updates.statement);
+    }
+    if (updates.likelihood !== undefined || updates.impact !== undefined) {
+      const residual = getResidualRating(nextRisk.likelihood, nextRisk.impact);
+      nextRisk.severity = residual.severity;
+      nextRisk.residualRating = residual.label;
+    }
+
+    const updatedSharedRisk = buildSharedRiskFromSourceRisk(nextRisk, currentSharedRisk);
+    if (updatedSharedRisk.versionNumber === currentSharedRisk.versionNumber) {
+      return;
+    }
 
     setSharedRisks((current) =>
-      current.map((sharedRisk) => (sharedRisk.id === sharedRiskId ? updatedSharedRisk : sharedRisk)),
+      current.map((sharedRisk) => (sharedRisk.id === updatedSharedRisk.id ? updatedSharedRisk : sharedRisk)),
+    );
+    setSharedRiskSubscriptions((current) =>
+      current.map((subscription) =>
+        subscription.sharedRiskId === updatedSharedRisk.id && subscription.projectId !== activeProject.id
+          ? {
+              ...subscription,
+              state: subscription.state === 'not_applicable' ? 'not_applicable' : 'review_required',
+              updatedAt: new Date().toISOString(),
+              lastSeenSharedRiskVersion: updatedSharedRisk.versionNumber,
+            }
+          : subscription,
+      ),
     );
     setProjects((current) =>
       current.map((project) => ({
         ...project,
         risks: project.risks.map((risk) =>
-          risk.sharedRiskId === sharedRiskId
+          project.id !== activeProject.id &&
+          risk.sharedRiskId === updatedSharedRisk.id &&
+          risk.sharedRiskRole === 'linked'
             ? {
                 ...risk,
-                statement: syncedStatement,
-                trigger: syncedTrigger,
-                consequence: syncedConsequence,
-                lastUpdated: 'Just now',
+                sharedReviewStatus: 'review_required',
+                lastUpdated: risk.lastUpdated,
                 history: [
-                  {
-                    label:
-                      project.id === activeProject.id && risk.id === riskId
-                        ? `${historyLabel} and synchronized to shared library`
-                        : `Synchronized from shared risk ${sharedRiskId}`,
-                    meta: 'Local edit • Just now',
-                  },
+                  createHistoryEntry(
+                    `Parent shared risk updated to v${updatedSharedRisk.versionNumber}`,
+                    updatedSharedRisk.lastChangeSummary.join(' • '),
+                  ),
                   ...risk.history,
                 ],
               }
@@ -1322,6 +2859,7 @@ export default function App() {
   }
 
   function handleDeleteRisk(riskId: string) {
+    const currentRisk = riskRecords.find((risk) => risk.id === riskId);
     updateActiveProject((project) => {
       const remainingRisks = project.risks.filter((risk) => risk.id !== riskId);
       if (remainingRisks.length > 0 && selectedRiskId === riskId) {
@@ -1332,6 +2870,21 @@ export default function App() {
       }
       return {...project, risks: remainingRisks};
     });
+
+    if (currentRisk?.sharedRiskId && currentRisk.sharedRiskRole === 'linked') {
+      setSharedRiskSubscriptions((current) =>
+        current.map((subscription) =>
+          subscription.sharedRiskId === currentRisk.sharedRiskId && subscription.projectId === activeProject.id
+            ? {
+                ...subscription,
+                state: subscription.state === 'not_applicable' ? 'not_applicable' : 'watching',
+                linkedLocalRiskId: null,
+                updatedAt: new Date().toISOString(),
+              }
+            : subscription,
+        ),
+      );
+    }
   }
 
   function handleShareRisk(riskId: string) {
@@ -1345,20 +2898,8 @@ export default function App() {
       return;
     }
 
-    const sharedRiskId = formatSharedRiskSequence(nextSharedRiskSequence);
-    const sharedRisk: SharedRisk = {
-      id: sharedRiskId,
-      title: localRisk.title,
-      statement: localRisk.statement,
-      trigger: localRisk.trigger,
-      consequence: localRisk.consequence,
-      sourceImpactScore: localRisk.impact,
-      sharedImpactProfile: getImpactTranslationProfile(
-        getScoreDefinition(activeProject.scoringModel.impact, localRisk.impact) ?? activeProject.scoringModel.impact[localRisk.impact - 1],
-      ) ?? undefined,
-      updatedAt: new Date().toISOString(),
-      sourceProjectId: activeProject.id,
-    };
+    const sourceRisk: Risk = {...localRisk, sharedRiskId: formatSharedRiskSequence(nextSharedRiskSequence), sharedRiskRole: 'source'};
+    const sharedRisk = buildSharedRiskFromSourceRisk(sourceRisk);
 
     setSharedRisks((current) => [sharedRisk, ...current]);
     updateActiveProject((project) => ({
@@ -1367,23 +2908,66 @@ export default function App() {
         risk.id === riskId
           ? {
               ...risk,
-              sharedRiskId,
-              history: [{label: 'Added to shared library', meta: 'Local edit • Just now'}, ...risk.history],
+              sharedRiskId: sharedRisk.id,
+              sharedRiskRole: 'source',
+              sharedParentVersionSeen: sharedRisk.versionNumber,
+              sharedReviewStatus: 'current',
+              history: [createHistoryEntry('Added to shared library', 'Local edit'), ...risk.history],
             }
           : risk,
       ),
     }));
   }
 
-  function handleAddSharedRiskToActiveProject(sharedRiskId: string) {
+  function handleSubscribeToSharedRisk(sharedRiskId: string) {
     const sharedRisk = sharedRisks.find((risk) => risk.id === sharedRiskId);
     if (!sharedRisk) {
       return;
     }
 
-    const alreadyLinked = riskRecords.some((risk) => risk.sharedRiskId === sharedRiskId);
-    if (alreadyLinked) {
+    if (sharedRisk.sourceProjectId === activeProject.id) {
       setView('risk');
+      return;
+    }
+
+    const existingSubscription = sharedRiskSubscriptions.find(
+      (subscription) => subscription.sharedRiskId === sharedRiskId && subscription.projectId === activeProject.id,
+    );
+    if (existingSubscription) {
+      setView('risk');
+      return;
+    }
+
+    const nextSubscription = normalizeSharedRiskSubscriptionRecord({
+      id: formatSharedRiskSubscriptionSequence(nextSharedRiskSubscriptionSequence),
+      sharedRiskId,
+      projectId: activeProject.id,
+      state: 'watching',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastSeenSharedRiskVersion: sharedRisk.versionNumber,
+      lastReviewedSharedRiskVersion: null,
+      linkedLocalRiskId: null,
+    });
+    setSharedRiskSubscriptions((current) => [nextSubscription, ...current]);
+    setView('risk');
+  }
+
+  function handleCreateLinkedLocalRisk(sharedRiskId: string) {
+    setSharedRiskDrawerOpen(false);
+
+    const sharedRisk = sharedRisks.find((risk) => risk.id === sharedRiskId);
+    if (!sharedRisk) {
+      return;
+    }
+
+    const existingLinkedRisk = riskRecords.find(
+      (risk) => risk.sharedRiskId === sharedRiskId && risk.sharedRiskRole === 'linked',
+    );
+    if (existingLinkedRisk) {
+      setSelectedRiskId(existingLinkedRisk.id);
+      setView('risk');
+      setDrawerOpen(true);
       return;
     }
 
@@ -1393,7 +2977,12 @@ export default function App() {
     const residual = getResidualRating(3, translatedImpact);
     const nextRisk: Risk = {
       id: formatRiskSequence(nextRiskSequence),
+      originKey: createOriginKey('risk'),
       sharedRiskId,
+      sharedRiskRole: 'linked',
+      sharedParentVersionSeen: sharedRisk.versionNumber,
+      sharedReviewStatus: 'current',
+      sharedOverrideRationale: '',
       title: sharedRisk.title,
       statement: sharedRisk.statement,
       trigger: sharedRisk.trigger,
@@ -1407,7 +2996,8 @@ export default function App() {
       residualRating: residual.label,
       responseType: 'Mitigate',
       project: activeProject.name,
-      lastUpdated: 'Just now',
+      lastUpdated: new Date().toISOString(),
+      
       dueDate: '',
       mitigation: 'Define the mitigation plan for this shared risk in this project context.',
       contingency: '',
@@ -1417,15 +3007,38 @@ export default function App() {
       createdBy: 'Shared library import',
       internalOnly: false,
       history: [
-        {
-          label:
-            sharedRisk.sharedImpactProfile && translatedImpact !== sharedRisk.sharedImpactProfile.sourceScore
-              ? `Added from shared library (${sharedRisk.id}) and impact mapped to local score ${translatedImpact}`
-              : `Added from shared library (${sharedRisk.id})`,
-          meta: 'Local edit • Just now',
-        },
+        createHistoryEntry(
+          sharedRisk.sharedImpactProfile && translatedImpact !== sharedRisk.sharedImpactProfile.sourceScore
+            ? `Linked local risk created from shared risk ${sharedRisk.referenceCode} and suggested impact mapped to local score ${translatedImpact}`
+            : `Linked local risk created from shared risk ${sharedRisk.referenceCode}`,
+          'Local edit',
+        ),
       ],
     };
+
+    const existingSubscription = sharedRiskSubscriptions.find(
+      (subscription) => subscription.sharedRiskId === sharedRiskId && subscription.projectId === activeProject.id,
+    );
+    const nextSubscription = normalizeSharedRiskSubscriptionRecord({
+      id: existingSubscription?.id ?? formatSharedRiskSubscriptionSequence(nextSharedRiskSubscriptionSequence),
+      sharedRiskId,
+      projectId: activeProject.id,
+      state: 'linked',
+      createdAt: existingSubscription?.createdAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastSeenSharedRiskVersion: sharedRisk.versionNumber,
+      lastReviewedSharedRiskVersion: sharedRisk.versionNumber,
+      lastReviewedAt: new Date().toISOString(),
+      reviewComment: existingSubscription?.reviewComment ?? '',
+      reviewedByName: existingSubscription?.reviewedByName ?? '',
+      linkedLocalRiskId: nextRisk.id,
+    });
+    setSharedRiskSubscriptions((current) => {
+      const others = current.filter(
+        (subscription) => !(subscription.sharedRiskId === sharedRiskId && subscription.projectId === activeProject.id),
+      );
+      return [nextSubscription, ...others];
+    });
 
     updateActiveProject((project) => ({
       ...project,
@@ -1436,11 +3049,81 @@ export default function App() {
     setDrawerOpen(true);
   }
 
+  function handleAcknowledgeSharedRiskReview(sharedRiskId: string, comment: string) {
+    const sharedRisk = sharedRisks.find((risk) => risk.id === sharedRiskId);
+    const currentSubscription = sharedRiskSubscriptions.find(
+      (subscription) => subscription.sharedRiskId === sharedRiskId && subscription.projectId === activeProject.id,
+    );
+    if (!sharedRisk || !comment.trim() || !currentSubscription) {
+      return;
+    }
+    const fromVersion =
+      currentSubscription.lastReviewedSharedRiskVersion ??
+      (currentSubscription.lastSeenSharedRiskVersion > 1 ? currentSubscription.lastSeenSharedRiskVersion - 1 : 1);
+
+    setSharedRiskSubscriptions((current) =>
+      current.map((subscription) =>
+        subscription.sharedRiskId === sharedRiskId && subscription.projectId === activeProject.id
+          ? {
+              ...subscription,
+              state: subscription.linkedLocalRiskId ? 'linked' : 'watching',
+              updatedAt: new Date().toISOString(),
+              lastSeenSharedRiskVersion: sharedRisk.versionNumber,
+              lastReviewedSharedRiskVersion: sharedRisk.versionNumber,
+              lastReviewedAt: new Date().toISOString(),
+              reviewComment: comment.trim(),
+            }
+          : subscription,
+      ),
+    );
+    updateActiveProject((project) => ({
+      ...project,
+      risks: project.risks.map((risk) =>
+        risk.sharedRiskId === sharedRiskId && risk.sharedRiskRole === 'linked'
+          ? {
+              ...risk,
+              sharedParentVersionSeen: sharedRisk.versionNumber,
+              sharedReviewStatus: 'reviewed_no_change',
+              history: [
+                createHistoryEntry(
+                  `Reviewed parent shared risk change v${fromVersion} -> v${sharedRisk.versionNumber}`,
+                  `Comment: ${comment.trim()}`,
+                ),
+                ...risk.history,
+              ],
+            }
+          : risk,
+      ),
+    }));
+  }
+
+  function handleMarkSharedRiskNotApplicable(sharedRiskId: string) {
+    const sharedRisk = sharedRisks.find((risk) => risk.id === sharedRiskId);
+    if (!sharedRisk) {
+      return;
+    }
+
+    setSharedRiskSubscriptions((current) =>
+      current.map((subscription) =>
+        subscription.sharedRiskId === sharedRiskId && subscription.projectId === activeProject.id
+          ? {
+              ...subscription,
+              state: 'not_applicable',
+              updatedAt: new Date().toISOString(),
+              lastSeenSharedRiskVersion: sharedRisk.versionNumber,
+            }
+          : subscription,
+      ),
+    );
+  }
+
   function handleRenameRisk(riskId: string, nextRiskId: string) {
     const normalizedNextId = sanitizeRiskId(nextRiskId);
     if (!normalizedNextId || normalizedNextId === riskId) {
       return;
     }
+
+    const currentRisk = riskRecords.find((risk) => risk.id === riskId);
 
     updateActiveProject((project) => ({
       ...project,
@@ -1449,9 +3132,9 @@ export default function App() {
           ? {
               ...risk,
               id: normalizedNextId,
-              lastUpdated: 'Just now',
+              lastUpdated: new Date().toISOString(),
               history: [
-                {label: `Risk ID updated (${riskId} -> ${normalizedNextId})`, meta: 'Local edit • Just now'},
+                createHistoryEntry(`Risk ID updated (${riskId} -> ${normalizedNextId})`, 'Local edit'),
                 ...risk.history,
               ],
             }
@@ -1467,6 +3150,24 @@ export default function App() {
 
     if (selectedRiskId === riskId) {
       setSelectedRiskId(normalizedNextId);
+    }
+
+    if (currentRisk?.sharedRiskId && currentRisk.sharedRiskRole === 'source') {
+      setSharedRisks((current) =>
+        current.map((sharedRisk) =>
+          sharedRisk.id === currentRisk.sharedRiskId ? {...sharedRisk, referenceCode: normalizedNextId} : sharedRisk,
+        ),
+      );
+    }
+
+    if (currentRisk?.sharedRiskId && currentRisk.sharedRiskRole === 'linked') {
+      setSharedRiskSubscriptions((current) =>
+        current.map((subscription) =>
+          subscription.sharedRiskId === currentRisk.sharedRiskId && subscription.projectId === activeProject.id
+            ? {...subscription, linkedLocalRiskId: normalizedNextId, updatedAt: new Date().toISOString()}
+            : subscription,
+        ),
+      );
     }
   }
 
@@ -1486,6 +3187,7 @@ export default function App() {
     const residual = getResidualRating(input.likelihood, input.impact);
     const nextRisk: Risk = {
       id: input.id.trim(),
+      originKey: createOriginKey('risk'),
       title: input.title.trim(),
       statement: buildRiskStatement(input.trigger, input.consequence),
       trigger: input.trigger.trim(),
@@ -1499,7 +3201,7 @@ export default function App() {
       residualRating: residual.label,
       responseType: input.responseType,
       project: activeProject.name,
-      lastUpdated: 'Just now',
+      lastUpdated: new Date().toISOString(),
       dueDate: input.dueDate,
       mitigation:
         residual.severity === 'Low'
@@ -1511,7 +3213,7 @@ export default function App() {
       comments: 0,
       createdBy: 'Local edit',
       internalOnly: false,
-      history: [{label: 'Risk created', meta: 'Local edit • Just now'}],
+      history: [createHistoryEntry('Risk created', 'Local edit')],
     };
 
     updateActiveProject((project) => ({
@@ -1720,43 +3422,213 @@ export default function App() {
     });
   }
 
-  function handleExportSnapshot() {
-    const snapshot = buildAppSnapshot(projects, activeProjectId, sharedRisks, sharedDecisions);
+  function downloadSnapshot(snapshot: AppSnapshot, fileName?: string) {
     const json = JSON.stringify(snapshot, null, 2);
-    const blob = new Blob([json], {type: 'application/json'});
+    downloadTextFile(json, fileName ?? `risk-decision-register-snapshot-${new Date().toISOString().slice(0, 10)}.json`, 'application/json');
+  }
+
+  function downloadTextFile(contents: string, fileName: string, mimeType: string) {
+    const blob = new Blob([contents], {type: mimeType});
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
-    const dateStamp = new Date().toISOString().slice(0, 10);
     link.href = url;
-    link.download = `risk-decision-register-snapshot-${dateStamp}.json`;
+    link.download = fileName;
     document.body.append(link);
     link.click();
     link.remove();
     window.URL.revokeObjectURL(url);
   }
 
-  function handleImportSnapshot(source: string) {
+  function handleOpenMasterSnapshot(source: string, fileName: string) {
     const snapshot = parseAppSnapshot(source);
-    const nextActiveProject =
-      snapshot.projects.find((project) => project.id === snapshot.activeProjectId) ?? snapshot.projects[0];
+    applySnapshotToWorkspace(snapshot, {
+      sourceLabel: 'Master registry',
+      sourceFileName: fileName,
+      registryName: snapshot.registry?.name ?? fileName.replace(/\.json$/i, '') ?? 'Governance Register',
+      baseDocumentId: snapshot.registry?.documentId ?? null,
+      baseRevision: snapshot.registry?.revision ?? null,
+      baseContentHash: snapshot.registry?.contentHash ?? null,
+      loadedAt: new Date().toISOString(),
+      status: 'master_loaded_clean',
+      lastError: '',
+    });
+    return `Opened master registry ${fileName} at revision v${snapshot.registry?.revision ?? 1}.`;
+  }
 
-    setProjects(snapshot.projects);
-    setSharedRisks(snapshot.sharedLibrary.risks);
-    setSharedDecisions(snapshot.sharedLibrary.decisions);
-    setActiveProjectId(nextActiveProject.id);
-    setSelectedRiskId(nextActiveProject.risks[0]?.id ?? '');
-    setSelectedDecisionId(nextActiveProject.decisions[0]?.id ?? '');
-    setDrawerOpen(false);
-    setCreateRiskOpen(false);
-    setCreateDecisionOpen(false);
+  function handleStartNewBoard() {
+    const confirmationMessage = boardLoaded
+      ? hasUnsavedChanges
+        ? 'Starting a new board will leave the current board and any unpublished changes. Continue?'
+        : 'Start a new board and leave the current board?'
+      : 'Start a new blank board?';
 
-    return `Imported ${snapshot.projects.length} project${snapshot.projects.length === 1 ? '' : 's'} from snapshot.`;
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    const blankProject = createBlankProject({
+      id: 'proj-new-board',
+      name: 'New Project',
+      description: 'Blank workspace ready for your first risk and decision records.',
+      scoringModel: defaultRiskScoringModel,
+    });
+    const blankSnapshot = buildAppSnapshot([blankProject], blankProject.id, [], [], [], {
+      documentId: createRegistryDocumentId(),
+      name: 'New Board',
+      revision: 0,
+      parentRevision: null,
+      parentContentHash: null,
+      lastModifiedAt: new Date().toISOString(),
+      lastModifiedBy: editorName.trim() || 'Browser workspace',
+    });
+
+    applySnapshotToWorkspace(blankSnapshot, {
+      sourceLabel: 'New board',
+      sourceFileName: '',
+      registryName: 'New Board',
+      baseDocumentId: blankSnapshot.registry?.documentId ?? null,
+      baseRevision: 0,
+      baseContentHash: blankSnapshot.registry?.contentHash ?? null,
+      loadedAt: new Date().toISOString(),
+      status: 'master_loaded_clean',
+      lastError: '',
+    });
+    setView('risk');
+  }
+
+  function handleRestoreRecoveryDraft() {
+    if (!recoveryDraft) {
+      return 'No recovery draft is available.';
+    }
+
+    applySnapshotToWorkspace(recoveryDraft.snapshot, {
+      ...recoveryDraft.session,
+      status: recoveryDraft.session.baseDocumentId ? 'master_loaded_dirty' : 'recovery_draft_available',
+      lastError: '',
+    });
+    return `Restored recovery draft saved ${formatHistoryTimestamp(recoveryDraft.savedAt)}.`;
+  }
+
+  function handleDiscardRecoveryDraft() {
+    window.localStorage.removeItem(REGISTRY_DRAFT_STORAGE_KEY);
+    setRecoveryDraft(null);
+    setRegistrySession((current) => ({
+      ...current,
+      status: current.baseDocumentId ? (hasUnsavedChanges ? 'master_loaded_dirty' : 'master_loaded_clean') : 'no_registry_loaded',
+      lastError: '',
+    }));
+    return 'Recovery draft discarded from this browser.';
+  }
+
+  function handleExportRecoveryDraft() {
+    if (!recoveryDraft) {
+      return 'No recovery draft is available.';
+    }
+
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    downloadSnapshot(recoveryDraft.snapshot, `risk-decision-register-draft-${dateStamp}.json`);
+    return 'Recovery draft exported.';
+  }
+
+  function handleExportReadOnlyBoard() {
+    if (!registrySession.baseDocumentId) {
+      throw new Error('Open or start a board first before exporting a read-only view.');
+    }
+
+    const exportedAt = new Date().toISOString();
+    const snapshot = buildAppSnapshot(projects, activeProjectId, sharedRisks, sharedRiskSubscriptions, sharedDecisions, {
+      documentId: registrySession.baseDocumentId,
+      name: registrySession.registryName,
+      revision: registrySession.baseRevision ?? 1,
+      parentRevision: registrySession.baseRevision != null ? Math.max(registrySession.baseRevision - 1, 0) || null : null,
+      parentContentHash: registrySession.baseContentHash,
+      lastModifiedAt: registrySession.loadedAt ?? exportedAt,
+      lastModifiedBy: editorName.trim() || registrySession.sourceLabel || 'Governance Register',
+    });
+    const html = buildReadOnlyBoardHtml(snapshot);
+    const timestampToken = exportedAt
+      .replace(/[-:]/g, '')
+      .replace(/\.\d{3}Z$/, 'Z')
+      .replace('T', '_');
+    const fileName = `${sanitizeFileStem(registrySession.registryName)}_${timestampToken}_read-only.html`;
+    downloadTextFile(html, fileName, 'text/html');
+    return `Exported a read-only board view as ${fileName}.`;
+  }
+
+  function handlePublishBoard() {
+    if (!registrySession.baseDocumentId || !registrySession.baseRevision || !registrySession.baseContentHash) {
+      throw new Error('Open a board first before publishing.');
+    }
+
+    const publishName = window.prompt('Enter your name for this published board version.', editorName.trim());
+    if (publishName == null) {
+      throw new Error('Publish cancelled.');
+    }
+    const normalizedPublishName = publishName.trim();
+    if (!normalizedPublishName) {
+      throw new Error('Your name is required before publishing.');
+    }
+    if (normalizedPublishName !== editorName) {
+      setEditorName(normalizedPublishName);
+    }
+
+    setRegistrySession((current) => ({
+      ...current,
+      status: 'publish_in_progress',
+      lastError: '',
+    }));
+
+    const nextRevision = registrySession.baseRevision + 1;
+    const publishedAt = new Date().toISOString();
+    const publishedBy = normalizedPublishName;
+    const publishedSnapshot = buildAppSnapshot(
+      projects,
+      activeProjectId,
+      sharedRisks,
+      sharedRiskSubscriptions,
+      sharedDecisions,
+      {
+        documentId: registrySession.baseDocumentId,
+        name: registrySession.registryName,
+        revision: nextRevision,
+        parentRevision: registrySession.baseRevision,
+        parentContentHash: registrySession.baseContentHash,
+        lastModifiedAt: publishedAt,
+        lastModifiedBy: publishedBy,
+      },
+    );
+
+    const timestampToken = publishedAt
+      .replace(/[-:]/g, '')
+      .replace(/\.\d{3}Z$/, 'Z')
+      .replace('T', '_');
+    const publishedFileName = `${sanitizeFileStem(registrySession.registryName)}_${timestampToken}_${sanitizeFileStem(
+      publishedBy,
+    ) || 'editor'}.json`;
+
+    downloadSnapshot(publishedSnapshot, publishedFileName);
+    applySnapshotToWorkspace(publishedSnapshot, {
+      sourceLabel: 'Master registry',
+      sourceFileName: publishedFileName,
+      registryName: publishedSnapshot.registry?.name ?? registrySession.registryName,
+      baseDocumentId: publishedSnapshot.registry?.documentId ?? registrySession.baseDocumentId,
+      baseRevision: publishedSnapshot.registry?.revision ?? nextRevision,
+      baseContentHash: publishedSnapshot.registry?.contentHash ?? null,
+      loadedAt: publishedAt,
+      lastPublishedAt: publishedAt,
+      lastPublishedRevision: nextRevision,
+      status: 'master_loaded_clean',
+      lastError: '',
+    });
+
+    return `Published a new board version as ${publishedFileName}. Share or store that JSON as the next board artifact.`;
   }
 
   return (
     <div className="min-h-screen bg-surface text-on-surface font-body">
       <div className="flex min-h-screen">
         <Sidebar
+          boardLoaded={boardLoaded}
           view={view}
           onChangeView={setView}
           activeProject={activeProject}
@@ -1770,7 +3642,28 @@ export default function App() {
             <TopNav
               view={view}
               projectName={activeProject.name}
+              boardLoaded={boardLoaded}
+              hasUnsavedChanges={hasUnsavedChanges}
+              onExportReadOnlyBoard={() => {
+                try {
+                  handleExportReadOnlyBoard();
+                } catch (error) {
+                  window.alert(error instanceof Error ? error.message : 'Read-only export failed.');
+                }
+              }}
+              onPublishBoard={() => {
+                try {
+                  const message = handlePublishBoard();
+                  window.alert(message);
+                } catch (error) {
+                  window.alert(error instanceof Error ? error.message : 'Publish failed.');
+                }
+              }}
               onPrimaryAction={() => {
+                if (!boardLoaded) {
+                  setView('snapshot');
+                  return;
+                }
                 if (view === 'risk') setCreateRiskOpen(true);
                 if (view === 'decision') setCreateDecisionOpen(true);
               }}
@@ -1778,9 +3671,16 @@ export default function App() {
             {view === 'risk' ? (
               <RiskRegisterPage
                 risks={riskRecords}
+                sharedRiskSubscriptions={activeProjectSharedRiskSubscriptions}
+                sharedRisks={sharedRisks}
+                projects={projects}
                 selectedRiskId={selectedRisk?.id ?? ''}
                 selectedRisk={selectedRisk}
                 onSelectRisk={handleRiskSelect}
+                onSelectSharedRisk={handleSharedRiskSelect}
+                onCreateLinkedLocalRisk={handleCreateLinkedLocalRisk}
+                onAcknowledgeSharedRisk={handleAcknowledgeSharedRiskReview}
+                onMarkSharedRiskNotApplicable={handleMarkSharedRiskNotApplicable}
                 onShowDecision={handleSelectDecision}
                 scoringModel={riskScoringModel}
                 decisions={decisions}
@@ -1810,16 +3710,26 @@ export default function App() {
                 activeProject={activeProject}
                 projects={projects}
                 sharedRisks={sharedRisks}
+                sharedRiskSubscriptions={sharedRiskSubscriptions}
                 sharedDecisions={sharedDecisions}
-                onAddSharedRiskToProject={handleAddSharedRiskToActiveProject}
+                onAddSharedRiskToProject={handleSubscribeToSharedRisk}
+                onOpenRiskInProject={handleOpenRiskInProject}
                 onAddSharedDecisionToProject={handleAddSharedDecisionToActiveProject}
               />
             ) : view === 'snapshot' ? (
               <SnapshotPage
                 activeProjectName={activeProject.name}
                 projectCount={projects.length}
-                onExportSnapshot={handleExportSnapshot}
-                onImportSnapshot={handleImportSnapshot}
+                onOpenMasterSnapshot={handleOpenMasterSnapshot}
+                onStartNewBoard={handleStartNewBoard}
+                onPublishBoard={handlePublishBoard}
+                onExportReadOnlyBoard={handleExportReadOnlyBoard}
+                onRestoreRecoveryDraft={handleRestoreRecoveryDraft}
+                onDiscardRecoveryDraft={handleDiscardRecoveryDraft}
+                onExportRecoveryDraft={handleExportRecoveryDraft}
+                registrySession={registrySession}
+                recoveryDraft={recoveryDraft}
+                hasUnsavedChanges={hasUnsavedChanges}
               />
             ) : (
               <SettingsPage
@@ -1845,9 +3755,27 @@ export default function App() {
               decisions={decisions}
               projects={projects}
               sharedRisks={sharedRisks}
+              sharedRiskSubscriptions={sharedRiskSubscriptions}
               activeProjectId={activeProject.id}
               onShareRisk={handleShareRisk}
-              onSyncSharedRiskDescription={handleSyncSharedRiskDescription}
+              onOpenSharedRisk={handleSharedRiskSelect}
+            />
+          ) : null}
+          {view === 'risk' && selectedSharedRisk && selectedSharedRiskSubscription ? (
+            <SharedRiskDrawer
+              open={sharedRiskDrawerOpen}
+              sharedRisk={selectedSharedRisk}
+              subscription={selectedSharedRiskSubscription}
+              linkedLocalRisk={
+                selectedSharedRiskSubscription.linkedLocalRiskId
+                  ? riskRecords.find((risk) => risk.id === selectedSharedRiskSubscription.linkedLocalRiskId) ?? null
+                  : null
+              }
+              sourceProject={projects.find((project) => project.id === selectedSharedRisk.sourceProjectId) ?? activeProject}
+              onClose={() => setSharedRiskDrawerOpen(false)}
+              onCreateLinkedLocalRisk={() => handleCreateLinkedLocalRisk(selectedSharedRisk.id)}
+              onAcknowledge={(comment) => handleAcknowledgeSharedRiskReview(selectedSharedRisk.id, comment)}
+              onMarkNotApplicable={() => handleMarkSharedRiskNotApplicable(selectedSharedRisk.id)}
             />
           ) : null}
           {view === 'risk' ? (
@@ -1878,6 +3806,7 @@ export default function App() {
 }
 
 function Sidebar({
+  boardLoaded,
   view,
   onChangeView,
   activeProject,
@@ -1886,6 +3815,7 @@ function Sidebar({
   onSwitchProject,
   onCreateProject,
 }: {
+  boardLoaded: boolean;
   view: View;
   onChangeView: (view: View) => void;
   activeProject: Project;
@@ -1904,7 +3834,7 @@ function Sidebar({
     {id: 'risk', label: 'Risk Register', icon: 'security'},
     {id: 'decision', label: 'Decision Register', icon: 'gavel'},
     {id: 'library', label: 'Shared Library', icon: 'hub'},
-    {id: 'snapshot', label: 'Import / Export', icon: 'import_export'},
+    {id: 'snapshot', label: 'Registry Source', icon: 'sync_alt'},
     {id: 'settings', label: 'Settings', icon: 'tune'},
   ];
 
@@ -1946,7 +3876,12 @@ function Sidebar({
         </div>
 
         <button
-          className="mb-8 w-full rounded-2xl bg-white/75 p-4 text-left shadow-[0_8px_24px_rgba(42,52,57,0.05)] transition hover:bg-white hover:shadow-[0_8px_28px_rgba(42,52,57,0.09)]"
+          className={`mb-8 w-full rounded-2xl p-4 text-left shadow-[0_8px_24px_rgba(42,52,57,0.05)] transition ${
+            boardLoaded
+              ? 'bg-white/75 hover:bg-white hover:shadow-[0_8px_28px_rgba(42,52,57,0.09)]'
+              : 'cursor-not-allowed bg-white/40 text-slate-400'
+          }`}
+          disabled={!boardLoaded}
           onClick={handleOpenPanel}
           type="button"
         >
@@ -1957,29 +3892,39 @@ function Sidebar({
           <div className="truncate font-headline text-xl font-extrabold text-slate-900">
             {activeProject.name}
           </div>
-          {activeProject.description ? (
+          {boardLoaded && activeProject.description ? (
             <div className="mt-1.5 line-clamp-2 text-xs text-slate-500">
               {activeProject.description}
             </div>
           ) : null}
-          <div className="mt-2 flex items-center gap-3 text-[10px] font-semibold text-slate-400">
-            <span>{activeProject.risks.length} risk{activeProject.risks.length !== 1 ? 's' : ''}</span>
-            <span>·</span>
-            <span>{activeProject.decisions.length} decision{activeProject.decisions.length !== 1 ? 's' : ''}</span>
-          </div>
+          {boardLoaded ? (
+            <div className="mt-2 flex items-center gap-3 text-[10px] font-semibold text-slate-400">
+              <span>{activeProject.risks.length} risk{activeProject.risks.length !== 1 ? 's' : ''}</span>
+              <span>·</span>
+              <span>{activeProject.decisions.length} decision{activeProject.decisions.length !== 1 ? 's' : ''}</span>
+            </div>
+          ) : (
+            <div className="mt-2 text-[10px] font-semibold text-slate-400">
+              Start or open a board first
+            </div>
+          )}
         </button>
 
         <nav className="space-y-2">
           {navItems.map((item) => {
             const active = view === item.id;
+            const disabled = !boardLoaded && item.id !== 'snapshot';
             return (
               <button
                 key={item.id}
                 className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-semibold transition-all ${
                   active
                     ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/10'
-                    : 'text-slate-600 hover:bg-white/70 hover:text-slate-900'
+                    : disabled
+                      ? 'cursor-not-allowed text-slate-300'
+                      : 'text-slate-600 hover:bg-white/70 hover:text-slate-900'
                 }`}
+                disabled={disabled}
                 onClick={() => onChangeView(item.id)}
                 type="button"
               >
@@ -1991,6 +3936,12 @@ function Sidebar({
             );
           })}
         </nav>
+
+        {!boardLoaded ? (
+          <div className="mt-4 rounded-2xl bg-white/70 px-4 py-3 text-xs leading-relaxed text-slate-500 shadow-[0_8px_24px_rgba(42,52,57,0.05)]">
+            Open a board file or start a new board from `Registry Source` before working in the registers.
+          </div>
+        ) : null}
 
       </aside>
 
@@ -2173,13 +4124,38 @@ function TopNav({
   view,
   onPrimaryAction,
   projectName,
+  boardLoaded,
+  hasUnsavedChanges,
+  onExportReadOnlyBoard,
+  onPublishBoard,
 }: {
   view: View;
   onPrimaryAction?: () => void;
   projectName: string;
+  boardLoaded: boolean;
+  hasUnsavedChanges: boolean;
+  onExportReadOnlyBoard: () => void;
+  onPublishBoard: () => void;
 }) {
   const showPrimaryAction = view === 'risk' || view === 'decision';
   const [helpOpen, setHelpOpen] = useState(false);
+  const [publishMenuOpen, setPublishMenuOpen] = useState(false);
+  const publishMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!publishMenuOpen) {
+      return undefined;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!publishMenuRef.current?.contains(event.target as Node)) {
+        setPublishMenuOpen(false);
+      }
+    }
+
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => window.removeEventListener('mousedown', handlePointerDown);
+  }, [publishMenuOpen]);
 
   return (
     <>
@@ -2193,7 +4169,7 @@ function TopNav({
                 : view === 'library'
                   ? 'Cross-Project Library'
                 : view === 'snapshot'
-                  ? 'Shared Snapshot Workflow'
+                  ? 'Registry Source'
                   : 'Configuration'}
           </div>
           <div className="max-w-[340px] truncate font-headline text-lg font-extrabold text-slate-900">
@@ -2201,6 +4177,77 @@ function TopNav({
           </div>
         </div>
         <div className="flex items-center gap-4">
+          {boardLoaded ? (
+            <div className="hidden text-right md:block">
+              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                {hasUnsavedChanges ? 'Unpublished changes' : 'Board up to date'}
+              </div>
+              <div className="text-xs text-slate-500">
+                {hasUnsavedChanges ? 'Publish to save a new board version' : 'Publish again after your next edits'}
+              </div>
+            </div>
+          ) : null}
+          {boardLoaded ? (
+            <div className="relative" ref={publishMenuRef}>
+              <div className="flex overflow-hidden rounded-xl">
+                <button
+                  className={`px-4 py-2.5 text-sm font-bold transition ${
+                    hasUnsavedChanges
+                      ? 'bg-primary text-on-primary hover:bg-primary-dim'
+                      : 'bg-white text-on-surface ring-1 ring-slate-200 hover:bg-slate-50'
+                  }`}
+                  onClick={onPublishBoard}
+                  type="button"
+                >
+                  Publish
+                </button>
+                <button
+                  aria-expanded={publishMenuOpen}
+                  aria-haspopup="menu"
+                  className={`border-l px-3 py-2.5 text-sm transition ${
+                    hasUnsavedChanges
+                      ? 'border-white/20 bg-primary text-on-primary hover:bg-primary-dim'
+                      : 'border-slate-200 bg-white text-on-surface ring-1 ring-slate-200 hover:bg-slate-50'
+                  }`}
+                  onClick={() => setPublishMenuOpen((current) => !current)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-[18px]">expand_more</span>
+                </button>
+              </div>
+              {publishMenuOpen ? (
+                <div
+                  className="absolute right-0 top-[calc(100%+0.5rem)] z-40 min-w-[220px] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_20px_60px_rgba(42,52,57,0.16)]"
+                  role="menu"
+                >
+                  <button
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-on-surface transition hover:bg-slate-50"
+                    onClick={() => {
+                      setPublishMenuOpen(false);
+                      onPublishBoard();
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[18px] text-primary">upload_file</span>
+                    <span>Publish JSON</span>
+                  </button>
+                  <button
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-on-surface transition hover:bg-slate-50"
+                    onClick={() => {
+                      setPublishMenuOpen(false);
+                      onExportReadOnlyBoard();
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[18px] text-primary">overview</span>
+                    <span>Export Read-Only HTML</span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {showPrimaryAction ? (
             <button
               className="rounded-xl bg-gradient-to-br from-primary to-primary-dim px-4 py-2.5 text-sm font-bold text-on-primary shadow-lg shadow-primary/20 transition hover:opacity-90"
@@ -2247,7 +4294,7 @@ function TopNav({
                 <div>
                   <div className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Start Here</div>
                   <p>
-                    Use `Import / Export` to load a shared snapshot before a review session, or begin with a blank project and create records directly in the app.
+                    Use `Registry Source` to open a board JSON, start a new board, publish a new board version, or export a read-only HTML view for teammates who only need to review the current registers.
                   </p>
                 </div>
 
@@ -2266,9 +4313,9 @@ function TopNav({
                 </div>
 
                 <div>
-                  <div className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Snapshots</div>
+                  <div className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Master Workflow</div>
                   <p>
-                    Export a snapshot after team updates so others can import the same governed state later. This is the recommended collaboration path for restricted SharePoint environments.
+                    Open or start a board, work in the browser, then publish a new JSON version when you are ready to save your changes. If you need a view-only shareout, export a read-only HTML copy.
                   </p>
                 </div>
 
@@ -2817,19 +4864,24 @@ function SharedLibraryPage({
   activeProject,
   projects,
   sharedRisks,
+  sharedRiskSubscriptions,
   sharedDecisions,
   onAddSharedRiskToProject,
+  onOpenRiskInProject,
   onAddSharedDecisionToProject,
 }: {
   activeProject: Project;
   projects: Project[];
   sharedRisks: SharedRisk[];
+  sharedRiskSubscriptions: SharedRiskSubscription[];
   sharedDecisions: SharedDecision[];
   onAddSharedRiskToProject: (sharedRiskId: string) => void;
+  onOpenRiskInProject: (projectId: string, riskId: string) => void;
   onAddSharedDecisionToProject: (sharedDecisionId: string) => void;
 }) {
   const riskUsages = sharedRisks.map((sharedRisk) => ({
     sharedRisk,
+    subscriptions: sharedRiskSubscriptions.filter((subscription) => subscription.sharedRiskId === sharedRisk.id),
     usages: projects.flatMap((project) =>
       project.risks
         .filter((risk) => risk.sharedRiskId === sharedRisk.id)
@@ -2837,6 +4889,7 @@ function SharedLibraryPage({
           projectId: project.id,
           projectName: project.name,
           risk,
+          isSourceProject: project.id === sharedRisk.sourceProjectId,
           scoringModelMatches: scoringModelsMatch(project.scoringModel, activeProject.scoringModel),
         })),
     ),
@@ -2864,7 +4917,7 @@ function SharedLibraryPage({
           </p>
         </div>
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-900">
-          Shared records carry the common description. Risk scores remain project-specific and may not be directly comparable when projects use different scoring models.
+          Shared risks now work as source-owned upstream records. Subscriber projects can review them and optionally create linked local risks, but downstream scores and handling stay local and are not overwritten by parent updates.
         </div>
       </div>
 
@@ -2895,8 +4948,9 @@ function SharedLibraryPage({
             </div>
           ) : (
             <div className="space-y-4">
-              {riskUsages.map(({sharedRisk, usages}) => {
-                const alreadyInActiveProject = usages.some((usage) => usage.projectId === activeProject.id);
+              {riskUsages.map(({sharedRisk, usages, subscriptions}) => {
+                const activeProjectSubscription = subscriptions.find((subscription) => subscription.projectId === activeProject.id);
+                const alreadyInActiveProject = Boolean(activeProjectSubscription) || sharedRisk.sourceProjectId === activeProject.id;
                 const hasDifferentRubric = usages.some((usage) => !usage.scoringModelMatches);
                 const sharedImpactLabel = sharedRisk.sharedImpactProfile
                   ? `${sharedRisk.sharedImpactProfile.basis === 'schedule' ? 'Schedule' : 'Cost'} basis: ${
@@ -2921,12 +4975,22 @@ function SharedLibraryPage({
                         onClick={() => onAddSharedRiskToProject(sharedRisk.id)}
                         type="button"
                       >
-                        {alreadyInActiveProject ? 'Already In Project' : `Add To ${activeProject.name}`}
+                        {sharedRisk.sourceProjectId === activeProject.id
+                          ? 'Source Project'
+                          : alreadyInActiveProject
+                            ? 'Already Subscribed'
+                            : `Subscribe ${activeProject.name}`}
                       </button>
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
+                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
+                        Source project {projects.find((project) => project.id === sharedRisk.sourceProjectId)?.name ?? sharedRisk.sourceProjectId}
+                      </span>
                       <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
-                        Used in {usages.length} project{usages.length === 1 ? '' : 's'}
+                        Subscribed in {subscriptions.length} project{subscriptions.length === 1 ? '' : 's'}
+                      </span>
+                      <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+                        Linked locally in {usages.filter((usage) => usage.risk.sharedRiskRole === 'linked').length} project{usages.filter((usage) => usage.risk.sharedRiskRole === 'linked').length === 1 ? '' : 's'}
                       </span>
                       <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
                         Source impact {sharedRisk.sourceImpactScore}
@@ -2946,13 +5010,38 @@ function SharedLibraryPage({
                       {usages.map((usage) => (
                         <div key={`${sharedRisk.id}-${usage.projectId}`} className="rounded-2xl bg-white px-4 py-3">
                           <div className="flex items-center justify-between gap-4">
-                            <div className="text-sm font-semibold text-on-surface">{usage.projectName}</div>
+                            <div className="flex items-center gap-2">
+                              <div className="text-sm font-semibold text-on-surface">{usage.projectName}</div>
+                              <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${
+                                usage.projectId === sharedRisk.sourceProjectId
+                                  ? 'bg-primary/10 text-primary'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                {usage.projectId === sharedRisk.sourceProjectId ? 'Source' : 'Subscriber'}
+                              </span>
+                              <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${
+                                usage.risk.sharedRiskRole === 'linked'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                {usage.risk.sharedRiskRole === 'linked' ? 'Linked local risk' : 'Published source risk'}
+                              </span>
+                            </div>
                             <div className="text-xs text-on-surface-variant">
                               Likelihood {usage.risk.likelihood} · Impact {usage.risk.impact} · {usage.risk.residualRating}
                             </div>
                           </div>
-                          <div className="mt-1 text-xs text-on-surface-variant">
-                            Status {usage.risk.status} · Owner {usage.risk.owner || 'Not assigned'} · Response {usage.risk.responseType}
+                          <div className="mt-1 flex items-center justify-between gap-3 text-xs text-on-surface-variant">
+                            <div>
+                              Status {usage.risk.status} · Owner {usage.risk.owner || 'Not assigned'} · Response {usage.risk.responseType}
+                            </div>
+                            <button
+                              className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-700 transition hover:bg-slate-200"
+                              onClick={() => onOpenRiskInProject(usage.projectId, usage.risk.id)}
+                              type="button"
+                            >
+                              {usage.projectId === activeProject.id ? 'Go To Risk' : 'Open In Project'}
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -3033,19 +5122,35 @@ function SharedLibraryPage({
 function SnapshotPage({
   activeProjectName,
   projectCount,
-  onExportSnapshot,
-  onImportSnapshot,
+  onOpenMasterSnapshot,
+  onStartNewBoard,
+  onPublishBoard,
+  onExportReadOnlyBoard,
+  onRestoreRecoveryDraft,
+  onDiscardRecoveryDraft,
+  onExportRecoveryDraft,
+  registrySession,
+  recoveryDraft,
+  hasUnsavedChanges,
 }: {
   activeProjectName: string;
   projectCount: number;
-  onExportSnapshot: () => void;
-  onImportSnapshot: (source: string) => string;
+  onOpenMasterSnapshot: (source: string, fileName: string) => string;
+  onStartNewBoard: () => void;
+  onPublishBoard: () => string;
+  onExportReadOnlyBoard: () => string;
+  onRestoreRecoveryDraft: () => string;
+  onDiscardRecoveryDraft: () => string;
+  onExportRecoveryDraft: () => string;
+  registrySession: RegistrySession;
+  recoveryDraft: RecoveryDraft | null;
+  hasUnsavedChanges: boolean;
 }) {
   const [snapshotStatus, setSnapshotStatus] = useState<{
     tone: 'success' | 'error';
     message: string;
   } | null>(null);
-  const importFileRef = useRef<HTMLInputElement | null>(null);
+  const openMasterFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!snapshotStatus) {
@@ -3056,7 +5161,7 @@ function SnapshotPage({
     return () => window.clearTimeout(timeoutId);
   }, [snapshotStatus]);
 
-  async function handleSnapshotFileChange(event: ChangeEvent<HTMLInputElement>) {
+  async function handleMasterFileSelection(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
       return;
@@ -3064,15 +5169,15 @@ function SnapshotPage({
 
     try {
       const contents = await file.text();
-      const message = onImportSnapshot(contents);
+      const message = onOpenMasterSnapshot(contents, file.name);
       setSnapshotStatus({
         tone: 'success',
-        message: `${message} Source file: ${file.name}.`,
+        message,
       });
     } catch (error) {
       setSnapshotStatus({
         tone: 'error',
-        message: error instanceof Error ? error.message : 'Snapshot import failed.',
+        message: error instanceof Error ? error.message : 'Registry action failed.',
       });
     } finally {
       event.target.value = '';
@@ -3081,171 +5186,246 @@ function SnapshotPage({
 
   return (
     <div className="mx-auto w-full max-w-[1500px] px-8 py-8">
-      <div className="mb-8 flex flex-wrap items-end justify-between gap-6">
-        <div className="max-w-3xl">
-          <h1 className="font-headline text-4xl font-extrabold tracking-tight text-on-surface">
-            Import / Export
-          </h1>
-          <p className="mt-2 text-sm leading-relaxed text-on-surface-variant">
-            Load a shared register snapshot before review work begins, or export the current app state after updates so the next reviewer starts from the same governed baseline.
-          </p>
-        </div>
-        <button
-          className="rounded-xl bg-gradient-to-br from-primary to-primary-dim px-4 py-2.5 text-sm font-bold text-on-primary shadow-lg shadow-primary/20 transition hover:opacity-90"
-          onClick={onExportSnapshot}
-          type="button"
+      <input
+        accept=".json,application/json,text/plain"
+        className="hidden"
+        onChange={(event) => void handleMasterFileSelection(event)}
+        ref={openMasterFileRef}
+        type="file"
+      />
+
+      {snapshotStatus ? (
+        <div
+          className={`mb-6 rounded-2xl px-4 py-3 text-sm font-medium ${
+            snapshotStatus.tone === 'success' ? 'bg-emerald-100 text-emerald-900' : 'bg-rose-100 text-rose-900'
+          }`}
         >
-          Export Snapshot
-        </button>
-      </div>
+          {snapshotStatus.message}
+        </div>
+      ) : null}
 
-      <div className="mb-6 grid gap-4 lg:grid-cols-3">
-        <div className="rounded-[1.5rem] bg-white px-5 py-4 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
-          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Projects In App</div>
-          <div className="mt-2 text-3xl font-extrabold text-on-surface">{projectCount}</div>
-          <div className="mt-2 text-sm text-on-surface-variant">Full workspace state is included in every snapshot export.</div>
-        </div>
-        <div className="rounded-[1.5rem] bg-white px-5 py-4 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
-          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Active Project</div>
-          <div className="mt-2 text-xl font-extrabold text-on-surface">{activeProjectName}</div>
-          <div className="mt-2 text-sm text-on-surface-variant">The current project selection is preserved in the exported snapshot.</div>
-        </div>
-        <div className="rounded-[1.5rem] bg-white px-5 py-4 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
-          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Snapshot Format</div>
-          <div className="mt-2 text-xl font-extrabold text-on-surface">Pretty JSON</div>
-          <div className="mt-2 text-sm text-on-surface-variant">Readable, diff-friendly, and easy to store in SharePoint or revision control.</div>
-        </div>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.4fr)]">
-        <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
-          <div className="mb-5 flex items-center gap-3">
-            <span className="material-symbols-outlined text-primary">upload_file</span>
-            <div>
-              <h2 className="font-headline text-2xl font-extrabold text-on-surface">Import Snapshot</h2>
-              <p className="mt-1 text-sm text-on-surface-variant">
-                Choose an exported snapshot file to replace the current local browser state with that shared revision.
-              </p>
-            </div>
+      {!registrySession.baseDocumentId ? (
+        <div className="mx-auto mt-16 max-w-4xl">
+          <div className="mb-10 text-center">
+            <h1 className="font-headline text-4xl font-extrabold tracking-tight text-on-surface">Open Or Start A Board</h1>
+            <p className="mx-auto mt-3 max-w-2xl text-base leading-relaxed text-on-surface-variant">
+              Choose an existing governance board JSON file, or start a new board from a blank workspace.
+            </p>
           </div>
 
-          <input
-            accept=".json,application/json,text/plain"
-            className="hidden"
-            onChange={handleSnapshotFileChange}
-            ref={importFileRef}
-            type="file"
-          />
-
-          <button
-            className="w-full rounded-2xl border border-dashed border-primary/30 bg-primary/5 px-5 py-8 text-left transition hover:border-primary/50 hover:bg-primary/10"
-            onClick={() => importFileRef.current?.click()}
-            type="button"
-          >
-            <div className="flex items-start gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white text-primary shadow-sm">
-                <span className="material-symbols-outlined text-[24px]">file_open</span>
+          <div className="grid gap-6 md:grid-cols-2">
+            <button
+              className="rounded-[2rem] bg-white p-8 text-left shadow-[0_14px_40px_rgba(42,52,57,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_50px_rgba(42,52,57,0.10)]"
+              onClick={() => openMasterFileRef.current?.click()}
+              type="button"
+            >
+              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <span className="material-symbols-outlined text-[28px]">folder_open</span>
               </div>
+              <div className="text-2xl font-extrabold text-on-surface">Open Registry File</div>
+              <div className="mt-3 text-sm leading-relaxed text-on-surface-variant">
+                Load an existing board JSON file and continue working from that saved governance register.
+              </div>
+            </button>
+
+            <button
+              className="rounded-[2rem] bg-white p-8 text-left shadow-[0_14px_40px_rgba(42,52,57,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_50px_rgba(42,52,57,0.10)]"
+              onClick={onStartNewBoard}
+              type="button"
+            >
+              <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700">
+                <span className="material-symbols-outlined text-[28px]">add_box</span>
+              </div>
+              <div className="text-2xl font-extrabold text-on-surface">Start New Board</div>
+              <div className="mt-3 text-sm leading-relaxed text-on-surface-variant">
+                Begin with a blank governance workspace and publish the first board version when you are ready.
+              </div>
+            </button>
+          </div>
+
+          {recoveryDraft ? (
+            <div className="mt-8 text-center text-sm text-on-surface-variant">
+              Unsaved draft available from {formatHistoryTimestamp(recoveryDraft.savedAt)}.
+              {' '}
+              <button
+                className="font-semibold text-primary underline decoration-primary/40 underline-offset-4"
+                onClick={() => {
+                  const message = onRestoreRecoveryDraft();
+                  setSnapshotStatus({tone: 'success', message});
+                }}
+                type="button"
+              >
+                Restore draft
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="grid gap-6 xl:grid-cols-[minmax(360px,1fr)_minmax(0,1fr)]">
+          <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
+            <div className="mb-5 flex items-center gap-3">
+              <span className="material-symbols-outlined text-primary">folder_managed</span>
               <div>
-                <div className="text-base font-bold text-on-surface">Choose Snapshot File</div>
-                <div className="mt-1 text-sm leading-relaxed text-on-surface-variant">
-                  Supports the exported pretty JSON snapshot. Import runs immediately after file selection.
+                <h2 className="font-headline text-2xl font-extrabold text-on-surface">Current Board</h2>
+                <p className="mt-1 text-sm text-on-surface-variant">
+                  Continue working on the board you opened, publish a new version, or switch to another board file.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Board</div>
+                <div className="mt-3 space-y-2 text-sm text-on-surface-variant">
+                  <div>Name: <span className="font-semibold text-on-surface">{registrySession.registryName || 'Governance Register'}</span></div>
+                  <div>File: <span className="font-semibold text-on-surface">{registrySession.sourceFileName || 'New board'}</span></div>
+                  <div>Opened: <span className="font-semibold text-on-surface">{registrySession.loadedAt ? formatHistoryTimestamp(registrySession.loadedAt) : 'Not loaded'}</span></div>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Status</div>
+                <div className="mt-3 space-y-2 text-sm text-on-surface-variant">
+                  <div>Workspace: <span className="font-semibold text-on-surface">{activeProjectName}</span></div>
+                  <div>Changes: <span className="font-semibold text-on-surface">{hasUnsavedChanges ? 'Unsaved changes' : 'No pending changes'}</span></div>
+                  <div>{registrySession.lastPublishedAt ? `Last published ${formatHistoryTimestamp(registrySession.lastPublishedAt)}` : 'Not published yet'}</div>
                 </div>
               </div>
             </div>
-          </button>
 
-          {snapshotStatus ? (
-            <div
-              className={`mt-4 rounded-2xl px-4 py-3 text-sm font-medium ${
-                snapshotStatus.tone === 'success'
-                  ? 'bg-emerald-100 text-emerald-900'
-                  : 'bg-rose-100 text-rose-900'
-              }`}
-            >
-              {snapshotStatus.message}
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                className="rounded-xl bg-gradient-to-br from-primary to-primary-dim px-4 py-2.5 text-sm font-bold text-on-primary shadow-lg shadow-primary/20 transition hover:opacity-90"
+                onClick={() => openMasterFileRef.current?.click()}
+                type="button"
+              >
+                Open Board
+              </button>
+              <button
+                className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-on-surface ring-1 ring-slate-200 transition hover:bg-slate-50"
+                disabled={!registrySession.baseDocumentId}
+                onClick={() => {
+                  try {
+                    const message = onPublishBoard();
+                    setSnapshotStatus({tone: 'success', message});
+                  } catch (error) {
+                    setSnapshotStatus({
+                      tone: 'error',
+                      message: error instanceof Error ? error.message : 'Publish failed.',
+                    });
+                  }
+                }}
+                type="button"
+              >
+                Publish
+              </button>
+              <button
+                className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-on-surface ring-1 ring-slate-200 transition hover:bg-slate-50"
+                disabled={!registrySession.baseDocumentId}
+                onClick={() => {
+                  try {
+                    onExportReadOnlyBoard();
+                  } catch (error) {
+                    setSnapshotStatus({
+                      tone: 'error',
+                      message: error instanceof Error ? error.message : 'Read-only export failed.',
+                    });
+                  }
+                }}
+                type="button"
+              >
+                Export Read-Only HTML
+              </button>
+              <button
+                className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-on-surface transition hover:bg-slate-200"
+                onClick={onStartNewBoard}
+                type="button"
+              >
+                Start New Board
+              </button>
             </div>
-          ) : null}
+          </section>
 
-          <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-relaxed text-on-surface-variant">
-            Import replaces the current local snapshot in this browser. Export first if you want a rollback point before bringing in another teammate&apos;s revision.
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm leading-relaxed text-emerald-900">
-            Snapshots include each project&apos;s saved Likelihood and Impact scoring definitions, so imported projects retain the same scoring model that was configured before export.
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4 text-sm leading-relaxed text-on-surface-variant">
-            Want example content for a demo or walkthrough? Download the bundled
-            {' '}
-            <a
-              className="font-semibold text-primary underline decoration-primary/40 underline-offset-4"
-              download
-              href="demo-project-snapshot.json"
-            >
-              demo snapshot
-            </a>
-            {' '}
-            and import it here.
-          </div>
-        </section>
-
-        <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
-          <div className="mb-5 flex items-center gap-3">
-            <span className="material-symbols-outlined text-primary">download</span>
-            <div>
-              <h2 className="font-headline text-2xl font-extrabold text-on-surface">Export Snapshot</h2>
-              <p className="mt-1 text-sm text-on-surface-variant">
-                Capture the full app state after a review session so the next person starts from the same register baseline.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-              <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Included In Export</div>
-              <div className="mt-3 space-y-2 text-sm text-on-surface-variant">
-                <div>All projects, risks, and decisions</div>
-                <div>Shared risk and decision library records</div>
-                <div>Central scoring model definitions</div>
-                <div>Current active project selection</div>
-                <div>Version and export timestamp metadata</div>
+          <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
+            <div className="mb-5 flex items-center gap-3">
+              <span className="material-symbols-outlined text-primary">restore_page</span>
+              <div>
+                <h2 className="font-headline text-2xl font-extrabold text-on-surface">Draft Recovery</h2>
+                <p className="mt-1 text-sm text-on-surface-variant">
+                  Restore a recent unsaved draft if the browser was closed or refreshed before you published.
+                </p>
               </div>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-              <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Recommended Workflow</div>
-              <div className="mt-3 space-y-2 text-sm text-on-surface-variant">
-                <div>Export after each team review or approved update session.</div>
-                <div>Store snapshots in SharePoint or source control as the official record.</div>
-                <div>Import the latest revision before making new edits.</div>
-              </div>
-            </div>
-          </div>
 
-          <div className="mt-6">
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm leading-relaxed text-on-surface-variant">
-              Use the `Export Snapshot` button at the top of this page to download the current governed workspace state.
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-on-surface-variant">
+              {recoveryDraft ? (
+                <>
+                  Saved at {formatHistoryTimestamp(recoveryDraft.savedAt)}.
+                  {' '}
+                  {recoveryDraft.session.baseRevision != null ? `Based on board version ${recoveryDraft.session.baseRevision}.` : ''}
+                </>
+              ) : (
+                'No local recovery draft is available right now.'
+              )}
             </div>
-          </div>
-        </section>
-      </div>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-on-surface transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!recoveryDraft}
+                onClick={() => {
+                  const message = onRestoreRecoveryDraft();
+                  setSnapshotStatus({tone: 'success', message});
+                }}
+                type="button"
+              >
+                Restore Draft
+              </button>
+              <button
+                className="rounded-xl bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!recoveryDraft}
+                onClick={() => {
+                  const message = onDiscardRecoveryDraft();
+                  setSnapshotStatus({tone: 'success', message});
+                }}
+                type="button"
+              >
+                Discard Draft
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
 
 function RiskRegisterPage({
   risks,
+  sharedRiskSubscriptions,
+  sharedRisks,
+  projects,
   selectedRiskId,
   selectedRisk,
   onSelectRisk,
+  onSelectSharedRisk,
+  onCreateLinkedLocalRisk,
+  onAcknowledgeSharedRisk,
+  onMarkSharedRiskNotApplicable,
   onShowDecision,
   scoringModel,
   decisions,
 }: {
   risks: Risk[];
+  sharedRiskSubscriptions: SharedRiskSubscription[];
+  sharedRisks: SharedRisk[];
+  projects: Project[];
   selectedRiskId: string;
   selectedRisk: Risk | null;
   onSelectRisk: (riskId: string) => void;
+  onSelectSharedRisk: (sharedRiskId: string) => void;
+  onCreateLinkedLocalRisk: (sharedRiskId: string) => void;
+  onAcknowledgeSharedRisk: (sharedRiskId: string, comment: string) => void;
+  onMarkSharedRiskNotApplicable: (sharedRiskId: string) => void;
   onShowDecision: (decisionId: string) => void;
   scoringModel: RiskScoringModel;
   decisions: Decision[];
@@ -3259,6 +5439,23 @@ function RiskRegisterPage({
   const [statusFilter, setStatusFilter] = useState<'All' | RiskStatus>('All');
   const [ownerFilter, setOwnerFilter] = useState('All');
   const [severityFilter, setSeverityFilter] = useState<'All' | RiskSeverity>('All');
+
+  function requestSharedRiskAcknowledgement(sharedRiskId: string) {
+    const subscription = sharedRiskSubscriptions.find((item) => item.sharedRiskId === sharedRiskId);
+    const sharedRisk = sharedRisks.find((item) => item.id === sharedRiskId);
+    const fromVersion =
+      subscription?.lastReviewedSharedRiskVersion ??
+      (sharedRisk && sharedRisk.versionNumber > 1 ? sharedRisk.versionNumber - 1 : 1);
+    const toVersion = sharedRisk?.versionNumber ?? fromVersion;
+    const response = window.prompt(
+      `Enter the acknowledgement rationale/comment for reviewing the shared-risk change v${fromVersion} -> v${toVersion}.`,
+    );
+    if (!response || !response.trim()) {
+      return;
+    }
+
+    onAcknowledgeSharedRisk(sharedRiskId, response.trim());
+  }
 
   const openRisks = risks
     .filter((risk) => risk.status !== 'Closed' && risk.status !== 'Rejected')
@@ -3282,6 +5479,35 @@ function RiskRegisterPage({
     return true;
   });
   const retiredRisks = risks.filter((risk) => risk.status === 'Closed' || risk.status === 'Rejected');
+  const projectSharedRisks = sharedRiskSubscriptions
+    .map((subscription) => {
+      const sharedRisk = sharedRisks.find((risk) => risk.id === subscription.sharedRiskId);
+      if (!sharedRisk) {
+        return null;
+      }
+
+      const sourceProject = projects.find((project) => project.id === sharedRisk.sourceProjectId);
+      const linkedLocalRisk = subscription.linkedLocalRiskId
+        ? risks.find((risk) => risk.id === subscription.linkedLocalRiskId) ?? null
+        : null;
+
+      return {
+        subscription,
+        sharedRisk,
+        sourceProjectName: sourceProject?.name ?? sharedRisk.sourceProjectId,
+        linkedLocalRisk,
+      };
+    })
+    .filter(
+      (
+        row,
+      ): row is {
+        subscription: SharedRiskSubscription;
+        sharedRisk: SharedRisk;
+        sourceProjectName: string;
+        linkedLocalRisk: Risk | null;
+      } => row != null,
+    );
   const activeRisks = openRisks.length;
   const highCount = openRisks.filter((risk) => risk.severity === 'High').length;
   const mediumCount = openRisks.filter((risk) => risk.severity === 'Medium').length;
@@ -3617,6 +5843,119 @@ function RiskRegisterPage({
         </div>
       </section>
 
+      <section className="mb-5 overflow-hidden rounded-[1.75rem] bg-white shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-6 py-4">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">Shared Risks</div>
+            <div className="mt-1 text-sm text-on-surface-variant">
+              Read-only source-owned risks subscribed into this project. Create a linked local risk when local scoring or handling is needed.
+            </div>
+          </div>
+        </div>
+
+        {projectSharedRisks.length === 0 ? (
+          <div className="px-6 py-8 text-sm leading-relaxed text-on-surface-variant">
+            No shared risks are subscribed into this project yet. Use the `Shared Library` to subscribe a shared risk, then manage any local response through a linked local risk here.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1120px] border-collapse text-left">
+              <thead className="bg-surface-container-low/70 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                <tr>
+                  <th className="px-6 py-4">Shared Risk</th>
+                  <th className="px-6 py-4">Source Project</th>
+                  <th className="px-6 py-4">Owner / Status</th>
+                  <th className="px-6 py-4">Upstream Score</th>
+                  <th className="px-6 py-4">Version</th>
+                  <th className="px-6 py-4">Subscription</th>
+                  <th className="px-6 py-4">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projectSharedRisks.map(({subscription, sharedRisk, sourceProjectName, linkedLocalRisk}, index) => (
+                  <tr
+                    key={subscription.id}
+                    className={`border-t border-slate-200/60 ${index % 2 === 1 ? 'bg-slate-50/60' : ''}`}
+                  >
+                    <td className="px-6 py-5">
+                      <button
+                        className="text-left transition hover:opacity-80"
+                        onClick={() => onSelectSharedRisk(sharedRisk.id)}
+                        type="button"
+                      >
+                        <div className="font-mono text-sm font-bold text-primary">{sharedRisk.referenceCode}</div>
+                        <div className="mt-1 text-sm font-bold text-on-surface">{sharedRisk.title}</div>
+                      </button>
+                    </td>
+                    <td className="px-6 py-5 text-sm text-on-surface-variant">{sourceProjectName}</td>
+                    <td className="px-6 py-5 text-sm text-on-surface-variant">
+                      {sharedRisk.owner || 'Not assigned'} · {sharedRisk.status}
+                    </td>
+                    <td className="px-6 py-5 text-sm text-on-surface-variant">
+                      Likelihood {sharedRisk.upstreamLikelihood} · Impact {sharedRisk.upstreamImpact}
+                    </td>
+                    <td className="px-6 py-5 text-sm font-semibold text-on-surface">v{sharedRisk.versionNumber}</td>
+                    <td className="px-6 py-5">
+                      <div className="flex flex-wrap gap-2">
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+                          {subscription.state.replace('_', ' ')}
+                        </span>
+                        {linkedLocalRisk ? (
+                          <span className="rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
+                            Linked local risk {linkedLocalRisk.id}
+                          </span>
+                        ) : null}
+                        {subscription.state === 'review_required' ? (
+                          <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-amber-800">
+                            Review required
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="px-6 py-5">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-700 transition hover:bg-slate-200"
+                          onClick={() => onSelectSharedRisk(sharedRisk.id)}
+                          type="button"
+                        >
+                          View
+                        </button>
+                        <button
+                          className="rounded-full bg-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-on-surface ring-1 ring-slate-200 transition hover:bg-slate-50"
+                          onClick={() => onCreateLinkedLocalRisk(sharedRisk.id)}
+                          type="button"
+                        >
+                          {linkedLocalRisk ? 'Open Linked Local Risk' : 'Create Linked Local Risk'}
+                        </button>
+                        {subscription.state === 'review_required' ? (
+                          <button
+                            className="rounded-full bg-amber-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-amber-900 transition hover:bg-amber-200"
+                            onClick={() => requestSharedRiskAcknowledgement(sharedRisk.id)}
+                            type="button"
+                          >
+                            Acknowledge
+                          </button>
+                        ) : null}
+                        {subscription.state !== 'not_applicable' ? (
+                          <button
+                            className="rounded-full bg-rose-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-rose-700 transition hover:bg-rose-100"
+                            onClick={() => onMarkSharedRiskNotApplicable(sharedRisk.id)}
+                            type="button"
+                          >
+                            Mark Not Applicable
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       <section className="overflow-hidden rounded-[1.75rem] bg-white shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-6 py-4">
           <div>
@@ -3641,7 +5980,7 @@ function RiskRegisterPage({
             <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center">
               <div className="text-lg font-bold text-on-surface">No risks in this project yet</div>
               <div className="mx-auto mt-2 max-w-2xl text-sm leading-relaxed text-on-surface-variant">
-                Start by logging a new risk, or go to `Import / Export` to load a shared project snapshot before you begin working.
+                Start by logging a new risk, or go to `Registry Source` to open the current board file or import a JSON file before you begin working.
               </div>
             </div>
           </div>
@@ -3723,7 +6062,7 @@ function RiskRegisterPage({
                               <div className="text-sm font-bold text-on-surface">{risk.title}</div>
                               {risk.sharedRiskId ? (
                                 <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-primary">
-                                  Shared
+                                  {risk.sharedRiskRole === 'source' ? 'Published' : 'Linked'}
                                 </span>
                               ) : null}
                             </div>
@@ -4087,7 +6426,7 @@ function DecisionRegisterPage({
             <div className="max-w-md text-center">
               <div className="text-lg font-bold text-on-surface">No decisions in this project yet</div>
               <div className="mt-2 text-sm leading-relaxed text-on-surface-variant">
-                Start by logging a new decision, or go to `Import / Export` to load a shared snapshot that already contains register data.
+                Start by logging a new decision, or go to `Registry Source` to open the current board file or import a JSON file that already contains register data.
               </div>
             </div>
           </div>
@@ -4827,6 +7166,188 @@ function CreateDecisionModal({
   );
 }
 
+function SharedRiskDrawer({
+  open,
+  sharedRisk,
+  subscription,
+  linkedLocalRisk,
+  sourceProject,
+  onClose,
+  onCreateLinkedLocalRisk,
+  onAcknowledge,
+  onMarkNotApplicable,
+}: {
+  open: boolean;
+  sharedRisk: SharedRisk;
+  subscription: SharedRiskSubscription;
+  linkedLocalRisk: Risk | null;
+  sourceProject: Project;
+  onClose: () => void;
+  onCreateLinkedLocalRisk: () => void;
+  onAcknowledge: (comment: string) => void;
+  onMarkNotApplicable: () => void;
+}) {
+  const backdropPressStarted = useRef(false);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-slate-950/10"
+      onClick={(event) => {
+        if (backdropPressStarted.current && event.target === event.currentTarget) {
+          onClose();
+        }
+        backdropPressStarted.current = false;
+      }}
+      onMouseDown={(event) => {
+        backdropPressStarted.current = event.target === event.currentTarget;
+      }}
+      onMouseUp={() => {
+        window.setTimeout(() => {
+          backdropPressStarted.current = false;
+        }, 0);
+      }}
+    >
+      <aside
+        className="fixed inset-y-0 right-0 flex w-[28rem] flex-col border-l border-slate-200 bg-white shadow-[-20px_0_50px_rgba(42,52,57,0.12)]"
+        onClick={(event) => event.stopPropagation()}
+        onMouseDown={() => {
+          backdropPressStarted.current = false;
+        }}
+      >
+        <div className="shrink-0 border-b border-slate-200 px-6 py-5">
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">
+                Shared Risk {sharedRisk.referenceCode}
+              </div>
+              <h2 className="mt-1 font-headline text-2xl font-extrabold leading-tight text-on-surface">
+                {sharedRisk.title}
+              </h2>
+            </div>
+            <button
+              className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+              onClick={onClose}
+              type="button"
+            >
+              <span className="material-symbols-outlined">close</span>
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
+              Source-owned
+            </span>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+              Version v{sharedRisk.versionNumber}
+            </span>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+              {subscription.state.replace('_', ' ')}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+          <div className="rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4 text-sm leading-relaxed text-on-surface-variant">
+            This shared risk is read-only in this project. The source project owns the upstream statement and assessment. Create a linked local risk when this project needs its own local scoring, ownership, response, or due dates.
+          </div>
+
+          <div className="grid gap-3">
+            <DrawerMeta label="Source project" value={sourceProject.name} />
+            <DrawerMeta label="Owner" value={sharedRisk.owner || 'Not assigned'} />
+            <DrawerMeta label="Status" value={sharedRisk.status} />
+            <DrawerMeta label="Upstream likelihood" value={`${sharedRisk.upstreamLikelihood}`} />
+            <DrawerMeta label="Upstream impact" value={`${sharedRisk.upstreamImpact}`} />
+            <DrawerMeta label="Updated" value={formatHistoryTimestamp(sharedRisk.updatedAt)} />
+          </div>
+
+          <DrawerSection title="Shared Statement">
+            <div className="rounded-2xl bg-surface-container-low p-4 text-sm leading-relaxed text-on-surface">
+              {renderStatementWithBoldKeywords(sharedRisk.statement)}
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <DrawerMeta label="Trigger / Condition" value={sharedRisk.trigger} />
+              <DrawerMeta label="Consequence" value={sharedRisk.consequence} />
+            </div>
+          </DrawerSection>
+
+          <DrawerSection title="Review Status">
+            <div className="space-y-3">
+              <DrawerMeta label="Subscription state" value={subscription.state.replace('_', ' ')} />
+              <DrawerMeta
+                label="Last reviewed version"
+                value={subscription.lastReviewedSharedRiskVersion != null ? `v${subscription.lastReviewedSharedRiskVersion}` : 'Not yet reviewed'}
+              />
+              {linkedLocalRisk ? (
+                <DrawerMeta
+                  label="Linked local risk"
+                  value={`${linkedLocalRisk.id} · ${linkedLocalRisk.sharedReviewStatus ?? 'current'}`}
+                />
+              ) : (
+                <DrawerMeta label="Linked local risk" value="None yet" />
+              )}
+            </div>
+          </DrawerSection>
+
+          {sharedRisk.lastChangeSummary.length > 0 ? (
+            <DrawerSection title="Recent Shared Changes">
+              <div className="rounded-2xl bg-surface-container-low p-4">
+                <div className="space-y-2 text-sm leading-relaxed text-on-surface-variant">
+                  {sharedRisk.lastChangeSummary.map((change) => (
+                    <div key={change}>{change}</div>
+                  ))}
+                </div>
+              </div>
+            </DrawerSection>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="rounded-full bg-primary px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-primary-dim"
+              onClick={onCreateLinkedLocalRisk}
+              type="button"
+            >
+              {linkedLocalRisk ? 'Open Linked Local Risk' : 'Create Linked Local Risk'}
+            </button>
+            {subscription.state === 'review_required' ? (
+              <button
+                className="rounded-full bg-amber-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-amber-900 transition hover:bg-amber-200"
+                onClick={() => {
+                  const fromVersion =
+                    subscription.lastReviewedSharedRiskVersion ??
+                    (sharedRisk.versionNumber > 1 ? sharedRisk.versionNumber - 1 : 1);
+                  const response = window.prompt(
+                    `Enter the acknowledgement rationale/comment for reviewing the shared-risk change v${fromVersion} -> v${sharedRisk.versionNumber}.`,
+                  );
+                  if (!response || !response.trim()) {
+                    return;
+                  }
+                  onAcknowledge(response.trim());
+                }}
+                type="button"
+              >
+                Acknowledge
+              </button>
+            ) : null}
+            {subscription.state !== 'not_applicable' ? (
+              <button
+                className="rounded-full bg-rose-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-rose-700 transition hover:bg-rose-100"
+                onClick={onMarkNotApplicable}
+                type="button"
+              >
+                Mark Not Applicable
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function RiskDrawer({
   open,
   risk,
@@ -4841,9 +7362,10 @@ function RiskDrawer({
   decisions,
   projects,
   sharedRisks,
+  sharedRiskSubscriptions,
   activeProjectId,
   onShareRisk,
-  onSyncSharedRiskDescription,
+  onOpenSharedRisk,
 }: {
   open: boolean;
   risk: Risk;
@@ -4858,13 +7380,10 @@ function RiskDrawer({
   decisions: Decision[];
   projects: Project[];
   sharedRisks: SharedRisk[];
+  sharedRiskSubscriptions: SharedRiskSubscription[];
   activeProjectId: string;
   onShareRisk: (riskId: string) => void;
-  onSyncSharedRiskDescription: (
-    riskId: string,
-    updates: Pick<Risk, 'trigger' | 'consequence' | 'statement'>,
-    historyLabel: string,
-  ) => void;
+  onOpenSharedRisk: (sharedRiskId: string) => void;
 }) {
   const backdropPressStarted = useRef(false);
   const [editingField, setEditingField] = useState<QuickEditFieldName | null>(null);
@@ -4877,6 +7396,7 @@ function RiskDrawer({
   const [editingRiskId, setEditingRiskId] = useState(false);
   const [riskIdDraft, setRiskIdDraft] = useState(risk.id);
   const [riskIdError, setRiskIdError] = useState('');
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const [draftNarrative, setDraftNarrative] = useState({
     trigger: risk.trigger,
     consequence: risk.consequence,
@@ -4894,6 +7414,7 @@ function RiskDrawer({
     setEditingRiskId(false);
     setRiskIdDraft(risk.id);
     setRiskIdError('');
+    setHistoryExpanded(false);
     setDraftNarrative({
       trigger: risk.trigger,
       consequence: risk.consequence,
@@ -4987,7 +7508,7 @@ function RiskDrawer({
     const newValue = pendingScoreChange.value;
     const oldLabel = getScoreDefinition(definitions, oldValue)?.label ?? String(oldValue);
     const newLabel = getScoreDefinition(definitions, newValue)?.label ?? String(newValue);
-    const changeDescription = `${fieldLabel} updated (${oldValue} ${oldLabel} → ${newValue} ${newLabel}): ${scoreChangeReason.trim()}`;
+    const changeDescription = `${fieldLabel} updated (${oldValue} ${oldLabel} → ${newValue} ${newLabel})\nRationale: ${scoreChangeReason.trim()}`;
 
     onUpdateRisk(
       risk.id,
@@ -5015,14 +7536,14 @@ function RiskDrawer({
       statement: buildRiskStatement(draftNarrative.trigger, draftNarrative.consequence),
     };
 
-    if (risk.sharedRiskId) {
-      onSyncSharedRiskDescription(risk.id, statementUpdates, 'Risk statement updated');
-    } else {
-      onUpdateRisk(risk.id, statementUpdates, 'Risk statement updated');
-    }
+    onUpdateRisk(risk.id, statementUpdates, 'Risk statement updated');
 
     setEditingStatement(false);
-    setSavedFieldLabel(risk.sharedRiskId ? 'Risk statement synced across projects' : 'Risk statement saved');
+    setSavedFieldLabel(
+      risk.sharedRiskRole === 'source' && risk.sharedRiskId
+        ? 'Source shared risk updated'
+        : 'Risk statement saved',
+    );
   }
 
   function saveMitigationEdit() {
@@ -5040,17 +7561,20 @@ function RiskDrawer({
 
   const mitigationRequired = risk.severity !== 'Low';
   const sharedRiskUsages = risk.sharedRiskId
-    ? projects.flatMap((project) =>
-        project.risks
-          .filter((projectRisk) => projectRisk.sharedRiskId === risk.sharedRiskId)
-          .map((projectRisk) => ({
-            projectId: project.id,
-            projectName: project.name,
-            risk: projectRisk,
-            isActiveProject: project.id === activeProjectId,
-            scoringModelMatches: scoringModelsMatch(project.scoringModel, scoringModel),
-          })),
-      )
+    ? sharedRiskSubscriptions
+        .filter((subscription) => subscription.sharedRiskId === risk.sharedRiskId && subscription.projectId !== activeProjectId)
+        .map((subscription) => ({
+          ...subscription,
+          projectName: projects.find((project) => project.id === subscription.projectId)?.name ?? subscription.projectId,
+          linkedRisk:
+            projects
+              .find((project) => project.id === subscription.projectId)
+              ?.risks.find((projectRisk) => projectRisk.id === subscription.linkedLocalRiskId) ?? null,
+          scoringModelMatches: scoringModelsMatch(
+            projects.find((project) => project.id === subscription.projectId)?.scoringModel ?? scoringModel,
+            scoringModel,
+          ),
+        }))
     : [];
   const hasDifferentSharedRubric = sharedRiskUsages.some((usage) => !usage.scoringModelMatches);
   const sharedRiskRecord = risk.sharedRiskId ? sharedRisks.find((item) => item.id === risk.sharedRiskId) ?? null : null;
@@ -5085,6 +7609,56 @@ function RiskDrawer({
         }, 0);
       }}
     >
+      {pendingScoreChange ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/30 px-5">
+          <div className="w-full max-w-md rounded-[1.75rem] border border-amber-200 bg-white p-5 shadow-[0_24px_60px_rgba(42,52,57,0.22)]">
+            <div className="mb-3 flex items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-800">
+                <span className="material-symbols-outlined text-[22px]">rule</span>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-700">Rationale Required</div>
+                <div className="mt-1 text-base font-bold text-on-surface">
+                  Confirm the {pendingScoreChange.field === 'likelihood' ? 'likelihood' : 'impact'} score change
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-4 rounded-2xl bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-950">
+              This score change will not be saved until you provide a rationale. Add the reason below or cancel the change.
+            </div>
+
+            <textarea
+              autoFocus
+              className="min-h-28 w-full rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-amber-300 focus:shadow-[0_0_0_4px_rgba(217,119,6,0.12)]"
+              onChange={(event) => setScoreChangeReason(event.target.value)}
+              placeholder="Enter the rationale for this score change"
+              value={scoreChangeReason}
+            />
+
+            <div className="mt-4 flex gap-2">
+              <button
+                className="rounded-full bg-amber-600 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={!scoreChangeReason.trim()}
+                onClick={confirmScoreChange}
+                type="button"
+              >
+                Save Score Change
+              </button>
+              <button
+                className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-700 transition hover:bg-slate-200"
+                onClick={() => {
+                  setPendingScoreChange(null);
+                  setScoreChangeReason('');
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <aside
         className="fixed inset-y-0 right-0 flex w-[28rem] flex-col border-l border-slate-200 bg-white shadow-[-20px_0_50px_rgba(42,52,57,0.12)]"
         onClick={(event) => event.stopPropagation()}
@@ -5156,8 +7730,8 @@ function RiskDrawer({
         <div className="mb-4 flex flex-wrap gap-2">
           <RiskStatusBadge status={risk.status} />
           <SeverityBadge severity={risk.severity} />
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
-            Last updated {risk.lastUpdated}
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+            Last updated {formatHistoryTimestamp(risk.lastUpdated)}
           </span>
           {savedFieldLabel ? (
             <span className="rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-emerald-800">
@@ -5199,7 +7773,19 @@ function RiskDrawer({
           <label className="flex cursor-pointer items-center justify-between rounded-xl bg-slate-50 px-4 py-3 transition hover:bg-slate-100/90">
             <div>
               <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Visibility</div>
-              <div className="mt-0.5 text-sm font-semibold text-on-surface">Internal only</div>
+              <div className="mt-0.5 flex items-center gap-2 text-sm font-semibold text-on-surface">
+                <span>Internal only</span>
+                <button
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    window.alert('Internal only means this risk should stay out of customer-facing graphics, dashboards, and reports.');
+                  }}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-[14px]">help</span>
+                </button>
+              </div>
             </div>
             <input
               checked={risk.internalOnly ?? false}
@@ -5227,11 +7813,18 @@ function RiskDrawer({
           <div className="rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4">
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
-                Shared Risk {risk.sharedRiskId}
+                {risk.sharedRiskRole === 'source' ? 'Published Shared Risk' : 'Linked To Shared Risk'} {risk.sharedRiskId}
               </span>
               <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
-                Used in {sharedRiskUsages.length} project{sharedRiskUsages.length === 1 ? '' : 's'}
+                {risk.sharedRiskRole === 'source'
+                  ? `Subscribed in ${sharedRiskUsages.length} downstream project${sharedRiskUsages.length === 1 ? '' : 's'}`
+                  : `Parent version ${risk.sharedParentVersionSeen ?? sharedRiskRecord?.versionNumber ?? 1}`}
               </span>
+              {risk.sharedReviewStatus === 'review_required' ? (
+                <span className="rounded-full bg-amber-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-amber-800">
+                  Review required
+                </span>
+              ) : null}
               {sharedImpactSummary ? (
                 <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
                   {sharedImpactSummary}
@@ -5243,9 +7836,23 @@ function RiskDrawer({
                 </span>
               ) : null}
             </div>
-            <div className="text-sm leading-relaxed text-on-surface-variant">
-              This shared risk carries one common description across every linked project. Changes to the risk statement, trigger, and consequence sync automatically everywhere this shared risk is used. Likelihood, impact, severity, owner, response, and status shown here remain specific to this project.
+          <div className="text-sm leading-relaxed text-on-surface-variant">
+              {risk.sharedRiskRole === 'source'
+                ? 'This project owns the canonical shared risk. Edits made here update the upstream shared artifact and mark downstream subscribers for review when meaningful shared fields change.'
+                : 'This is a project-owned local linked risk. The parent shared risk remains read-only upstream context, and local ownership, scoring, status, and mitigation here stay under this project’s control.'}
             </div>
+            {risk.sharedRiskRole === 'linked' && sharedRiskRecord ? (
+              <div className="mt-3">
+                <button
+                  className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-primary transition hover:bg-primary/10"
+                  onClick={() => onOpenSharedRisk(sharedRiskRecord.id)}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-[15px]">open_in_new</span>
+                  View Parent Shared Risk
+                </button>
+              </div>
+            ) : null}
             {suggestedLocalImpact != null ? (
               <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-on-surface-variant">
                 Suggested local impact from shared profile:
@@ -5277,51 +7884,18 @@ function RiskDrawer({
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-sm font-semibold text-on-surface">
                       {usage.projectName}
-                      {usage.isActiveProject ? ' (current project)' : ''}
                     </div>
                     <div className="text-xs text-on-surface-variant">
-                      Likelihood {usage.risk.likelihood} · Impact {usage.risk.impact} · {usage.risk.residualRating}
+                      {usage.state.replace('_', ' ')}
                     </div>
                   </div>
                   <div className="mt-1 text-xs text-on-surface-variant">
-                    Status {usage.risk.status} · Owner {usage.risk.owner || 'Not assigned'} · Response {usage.risk.responseType}
+                    {usage.linkedRisk
+                      ? `Linked local risk ${usage.linkedRisk.id} · ${usage.linkedRisk.sharedReviewStatus ?? 'current'}`
+                      : 'No linked local risk yet'}
                   </div>
                 </div>
               ))}
-            </div>
-          </div>
-        ) : null}
-
-        {pendingScoreChange ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-            <div className="mb-2 text-sm font-bold text-amber-900">Rationale Required</div>
-            <div className="mb-3 text-sm text-amber-900/80">
-              Explain why the {pendingScoreChange.field} score is changing before saving this update.
-            </div>
-            <textarea
-              className="min-h-24 w-full rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-amber-300"
-              onChange={(event) => setScoreChangeReason(event.target.value)}
-              placeholder="Enter rationale for the score change"
-              value={scoreChangeReason}
-            />
-            <div className="mt-3 flex gap-2">
-              <button
-                className="rounded-full bg-amber-600 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-amber-700"
-                onClick={confirmScoreChange}
-                type="button"
-              >
-                Save Rationale
-              </button>
-              <button
-                className="rounded-full bg-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-100"
-                onClick={() => {
-                  setPendingScoreChange(null);
-                  setScoreChangeReason('');
-                }}
-                type="button"
-              >
-                Cancel
-              </button>
             </div>
           </div>
         ) : null}
@@ -5459,13 +8033,36 @@ function RiskDrawer({
           </div>
         </DrawerSection>
 
+        <DrawerSection title="Record Details">
+          <div className="grid grid-cols-2 gap-4">
+            <DrawerMeta label="Created by" value={risk.createdBy} />
+            <DrawerMeta label="Last updated" value={formatHistoryTimestamp(risk.lastUpdated)} />
+          </div>
+        </DrawerSection>
+
         <DrawerSection title="History">
-          <DrawerMeta label="Created by" value={risk.createdBy} />
+          {risk.history.length > 2 ? (
+            <div className="mb-3 flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-3">
+              <div className="text-sm text-on-surface-variant">
+                Showing {historyExpanded ? risk.history.length : 2} of {risk.history.length} history entr{risk.history.length === 1 ? 'y' : 'ies'}.
+              </div>
+              <button
+                className="rounded-full bg-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-primary transition hover:bg-primary/10"
+                onClick={() => setHistoryExpanded((current) => !current)}
+                type="button"
+              >
+                {historyExpanded ? 'Show Less' : `Show All ${risk.history.length}`}
+              </button>
+            </div>
+          ) : null}
           <div className="space-y-3">
-            {risk.history.map((entry) => (
-              <div key={`${entry.label}-${entry.meta}`} className="rounded-xl bg-slate-50 px-4 py-3">
-                <div className="text-sm font-semibold text-on-surface">{entry.label}</div>
+            {(historyExpanded ? risk.history : risk.history.slice(0, 2)).map((entry) => (
+              <div key={`${entry.label}-${entry.meta}-${entry.at ?? 'legacy'}`} className="rounded-xl bg-slate-50 px-4 py-3">
+                <div className="text-sm font-semibold whitespace-pre-line text-on-surface">{entry.label}</div>
                 <div className="mt-1 text-xs text-on-surface-variant">{entry.meta}</div>
+                <div className="mt-1 text-[11px] font-medium text-slate-400">
+                  {entry.at ? formatHistoryTimestamp(entry.at) : 'Recorded previously'}
+                </div>
               </div>
             ))}
           </div>

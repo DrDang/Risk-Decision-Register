@@ -1,6 +1,6 @@
 {
-  "version": "1",
-  "exportedAt": "2026-04-11T22:00:00.000Z",
+  "version": "2",
+  "exportedAt": "2026-04-18T18:45:00.000Z",
   "activeProjectId": "proj-alpha-demo",
   "projects": [
     {
@@ -329,5 +329,15 @@
         }
       ]
     }
-  ]
+  ],
+  "registry": {
+    "documentId": "registry-demo-alpha",
+    "name": "Project Alpha Demo Master",
+    "revision": 4,
+    "contentHash": "fnv1a32:a5753279",
+    "parentRevision": 3,
+    "parentContentHash": "fnv1a32:demo0003",
+    "lastModifiedAt": "2026-04-18T18:45:00.000Z",
+    "lastModifiedBy": "Demo seed"
+  }
 }
