@@ -1943,6 +1943,20 @@ function normalizeLegacyTimestamp(value: string | undefined) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+function normalizeHistoryMeta(value: string | undefined) {
+  if (!value) {
+    return 'Local edit';
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return 'Local edit';
+  }
+
+  const withoutLegacyJustNow = trimmed.replace(/\s*[•·-]\s*just now$/i, '').trim();
+  return withoutLegacyJustNow || 'Local edit';
+}
+
 function normalizeDateOnlyTimestamp(value: string | undefined) {
   if (!value) {
     return null;
@@ -1968,7 +1982,7 @@ function buildNormalizedHistoryEntries(
           entry && typeof entry === 'object'
             ? {
                 label: typeof entry.label === 'string' ? entry.label : 'Updated',
-                meta: typeof entry.meta === 'string' ? entry.meta : 'Local edit',
+                meta: normalizeHistoryMeta(typeof entry.meta === 'string' ? entry.meta : undefined),
                 at: normalizeLegacyTimestamp(typeof entry.at === 'string' ? entry.at : undefined) ?? undefined,
               }
             : null,
@@ -2249,7 +2263,7 @@ function normalizeSharedRiskRecord(input: Partial<SharedRisk> & Record<string, u
             entry && typeof entry === 'object'
               ? {
                   label: typeof entry.label === 'string' ? entry.label : 'Updated',
-                  meta: typeof entry.meta === 'string' ? entry.meta : 'Local edit',
+                  meta: normalizeHistoryMeta(typeof entry.meta === 'string' ? entry.meta : undefined),
                   at: typeof entry.at === 'string' ? entry.at : undefined,
                 }
               : null,
@@ -2889,6 +2903,7 @@ export default function App() {
   );
   const hasUnsavedChanges =
     Boolean(registrySession.baseContentHash) && workingSnapshot.registry?.contentHash !== registrySession.baseContentHash;
+  const shouldWarnBeforeUnload = hasUnsavedChanges || createRiskOpen || createDecisionOpen;
 
   useEffect(() => {
     window.localStorage.removeItem(PROJECTS_STORAGE_KEY);
@@ -2975,6 +2990,20 @@ export default function App() {
     workingSnapshot.registry?.name,
     workingSnapshot.registry?.revision,
   ]);
+
+  useEffect(() => {
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      if (!shouldWarnBeforeUnload) {
+        return;
+      }
+
+      event.preventDefault();
+      event.returnValue = '';
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [shouldWarnBeforeUnload]);
 
   function applySnapshotToWorkspace(
     snapshot: AppSnapshot,
@@ -7535,6 +7564,12 @@ function DecisionDetailPanel({
           items={decision.decisionDrivers}
           placeholder="Add a decision driver…"
           onAdd={(v) => save({decisionDrivers: [...decision.decisionDrivers, v]}, 'Driver added')}
+          onUpdate={(i, v) =>
+            save(
+              {decisionDrivers: decision.decisionDrivers.map((item, index) => (index === i ? v : item))},
+              'Driver updated',
+            )
+          }
           onRemove={(i) => save({decisionDrivers: decision.decisionDrivers.filter((_, j) => j !== i)}, 'Driver removed')}
         />
       </section>
@@ -7547,6 +7582,12 @@ function DecisionDetailPanel({
           items={decision.consideredOptions}
           placeholder="Add an option…"
           onAdd={(v) => save({consideredOptions: [...decision.consideredOptions, v]}, 'Option added')}
+          onUpdate={(i, v) =>
+            save(
+              {consideredOptions: decision.consideredOptions.map((item, index) => (index === i ? v : item))},
+              'Option updated',
+            )
+          }
           onRemove={(i) => save({consideredOptions: decision.consideredOptions.filter((_, j) => j !== i)}, 'Option removed')}
         />
       </section>
@@ -7759,35 +7800,103 @@ function EditableDecisionList({
   items,
   placeholder,
   onAdd,
+  onUpdate,
   onRemove,
   numbered = false,
 }: {
   items: string[];
   placeholder: string;
   onAdd: (value: string) => void;
+  onUpdate?: (index: number, value: string) => void;
   onRemove: (index: number) => void;
   numbered?: boolean;
 }) {
   const [draft, setDraft] = useState('');
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editDraft, setEditDraft] = useState('');
 
   return (
     <div>
       <div className="space-y-1.5">
-        {items.map((item, index) => (
-          <div key={`${item}-${index}`} className="group flex items-start gap-2 rounded-xl px-3 py-2 transition hover:bg-slate-50">
-            <span className="mt-0.5 shrink-0 text-xs font-bold text-slate-400">
-              {numbered ? `${index + 1}.` : '•'}
-            </span>
-            <span className="flex-1 text-sm text-on-surface">{item}</span>
-            <button
-              className="mt-0.5 shrink-0 rounded-full p-0.5 text-slate-300 opacity-0 transition hover:text-error group-hover:opacity-100"
-              onClick={() => onRemove(index)}
-              type="button"
-            >
-              <span className="material-symbols-outlined text-[13px]">close</span>
-            </button>
-          </div>
-        ))}
+        {items.map((item, index) => {
+          const isEditing = editingIndex === index;
+          return (
+            <div key={`${item}-${index}`} className="group flex items-start gap-2 rounded-xl px-3 py-2 transition hover:bg-slate-50">
+              <span className="mt-0.5 shrink-0 text-xs font-bold text-slate-400">
+                {numbered ? `${index + 1}.` : '•'}
+              </span>
+              {isEditing ? (
+                <div className="flex-1">
+                  <input
+                    autoFocus
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-primary/40"
+                    value={editDraft}
+                    onChange={(event) => setEditDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && editDraft.trim()) {
+                        onUpdate?.(index, editDraft.trim());
+                        setEditingIndex(null);
+                        setEditDraft('');
+                      }
+                      if (event.key === 'Escape') {
+                        setEditingIndex(null);
+                        setEditDraft('');
+                      }
+                    }}
+                  />
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      className="rounded-full bg-primary px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:opacity-90 disabled:opacity-40"
+                      disabled={!editDraft.trim()}
+                      onClick={() => {
+                        if (!editDraft.trim()) return;
+                        onUpdate?.(index, editDraft.trim());
+                        setEditingIndex(null);
+                        setEditDraft('');
+                      }}
+                      type="button"
+                    >
+                      Save
+                    </button>
+                    <button
+                      className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-200"
+                      onClick={() => {
+                        setEditingIndex(null);
+                        setEditDraft('');
+                      }}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <span className="flex-1 text-sm text-on-surface">{item}</span>
+                  {onUpdate ? (
+                    <button
+                      className="mt-0.5 shrink-0 rounded-full p-0.5 text-slate-300 opacity-0 transition hover:text-slate-600 group-hover:opacity-100"
+                      onClick={() => {
+                        setEditingIndex(index);
+                        setEditDraft(item);
+                      }}
+                      type="button"
+                    >
+                      <span className="material-symbols-outlined text-[13px]">edit</span>
+                    </button>
+                  ) : null}
+                  <button
+                    className="mt-0.5 shrink-0 rounded-full p-0.5 text-slate-300 opacity-0 transition hover:text-error group-hover:opacity-100"
+                    onClick={() => onRemove(index)}
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[13px]">close</span>
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })}
       </div>
       <div className="mt-2 flex gap-2">
         <input
@@ -8968,7 +9077,7 @@ function RiskDrawer({
             {(historyExpanded ? risk.history : risk.history.slice(0, 2)).map((entry) => (
               <div key={`${entry.label}-${entry.meta}-${entry.at ?? 'legacy'}`} className="rounded-xl bg-slate-50 px-4 py-3">
                 <div className="text-sm font-semibold whitespace-pre-line text-on-surface">{entry.label}</div>
-                <div className="mt-1 text-xs text-on-surface-variant">{entry.meta}</div>
+                <div className="mt-1 text-xs text-on-surface-variant">{normalizeHistoryMeta(entry.meta)}</div>
                 <div className="mt-1 text-[11px] font-medium text-slate-400">
                   {entry.at ? formatHistoryTimestamp(entry.at) : 'Recorded previously'}
                 </div>
