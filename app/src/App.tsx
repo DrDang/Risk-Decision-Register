@@ -7614,6 +7614,16 @@ function DecisionDetailPanel({
             items={decision.goodConsequences}
             placeholder="Add a positive consequence…"
             onAdd={(v) => save({goodConsequences: [...decision.goodConsequences, v]}, 'Consequence added')}
+            onUpdate={(i, v) =>
+              save(
+                {
+                  goodConsequences: decision.goodConsequences.map((item, index) =>
+                    index === i ? v : item,
+                  ),
+                },
+                'Consequence updated',
+              )
+            }
             onRemove={(i) => save({goodConsequences: decision.goodConsequences.filter((_, j) => j !== i)}, 'Consequence removed')}
           />
         </div>
@@ -7625,6 +7635,16 @@ function DecisionDetailPanel({
             items={decision.badConsequences}
             placeholder="Add a negative consequence…"
             onAdd={(v) => save({badConsequences: [...decision.badConsequences, v]}, 'Consequence added')}
+            onUpdate={(i, v) =>
+              save(
+                {
+                  badConsequences: decision.badConsequences.map((item, index) =>
+                    index === i ? v : item,
+                  ),
+                },
+                'Consequence updated',
+              )
+            }
             onRemove={(i) => save({badConsequences: decision.badConsequences.filter((_, j) => j !== i)}, 'Consequence removed')}
           />
         </div>
@@ -7821,7 +7841,14 @@ function EditableDecisionList({
         {items.map((item, index) => {
           const isEditing = editingIndex === index;
           return (
-            <div key={`${item}-${index}`} className="group flex items-start gap-2 rounded-xl px-3 py-2 transition hover:bg-slate-50">
+            <div
+              key={`${item}-${index}`}
+              className={`group flex items-start gap-2 rounded-xl border px-3 py-2.5 transition ${
+                isEditing
+                  ? 'border-primary/25 bg-primary/5'
+                  : 'border-slate-200/80 bg-slate-50/55 hover:border-slate-300 hover:bg-slate-50'
+              }`}
+            >
               <span className="mt-0.5 shrink-0 text-xs font-bold text-slate-400">
                 {numbered ? `${index + 1}.` : '•'}
               </span>
@@ -7872,26 +7899,40 @@ function EditableDecisionList({
                 </div>
               ) : (
                 <>
-                  <span className="flex-1 text-sm text-on-surface">{item}</span>
-                  {onUpdate ? (
-                    <button
-                      className="mt-0.5 shrink-0 rounded-full p-0.5 text-slate-300 opacity-0 transition hover:text-slate-600 group-hover:opacity-100"
-                      onClick={() => {
-                        setEditingIndex(index);
-                        setEditDraft(item);
-                      }}
-                      type="button"
-                    >
-                      <span className="material-symbols-outlined text-[13px]">edit</span>
-                    </button>
-                  ) : null}
                   <button
-                    className="mt-0.5 shrink-0 rounded-full p-0.5 text-slate-300 opacity-0 transition hover:text-error group-hover:opacity-100"
-                    onClick={() => onRemove(index)}
+                    className="min-w-0 flex-1 rounded-lg px-1 py-0.5 text-left text-sm text-on-surface transition hover:bg-white/70"
+                    onClick={() => {
+                      if (!onUpdate) {
+                        return;
+                      }
+                      setEditingIndex(index);
+                      setEditDraft(item);
+                    }}
                     type="button"
                   >
-                    <span className="material-symbols-outlined text-[13px]">close</span>
+                    <span className="block">{item}</span>
                   </button>
+                  <div className="mt-0.5 flex shrink-0 items-center self-start gap-1">
+                    {onUpdate ? (
+                      <button
+                        className="flex h-8 w-8 items-center justify-center rounded-full bg-white/85 p-0 text-slate-400 ring-1 ring-slate-200 transition hover:text-slate-700"
+                        onClick={() => {
+                          setEditingIndex(index);
+                          setEditDraft(item);
+                        }}
+                        type="button"
+                      >
+                        <span className="material-symbols-outlined text-[13px]">edit</span>
+                      </button>
+                    ) : null}
+                    <button
+                      className="flex h-8 w-8 items-center justify-center rounded-full bg-white/85 p-0 text-slate-300 ring-1 ring-slate-200 transition hover:text-error"
+                      onClick={() => onRemove(index)}
+                      type="button"
+                    >
+                      <span className="material-symbols-outlined text-[13px]">close</span>
+                    </button>
+                  </div>
                 </>
               )}
             </div>
