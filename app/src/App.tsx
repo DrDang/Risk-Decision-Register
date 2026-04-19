@@ -1371,15 +1371,33 @@ function getDefaultBurndownRiskIds(risks: Risk[]) {
   return prioritized.slice(0, 4).map((risk) => risk.id);
 }
 
-function formatBurndownDateLabel(value: string) {
+function formatBurndownDateLabel(value: string, rangeStart?: number, rangeEnd?: number) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return value;
   }
 
+  const span = rangeStart != null && rangeEnd != null ? Math.max(rangeEnd - rangeStart, 0) : null;
+
+  if (span != null && span <= 1000 * 60 * 60 * 36) {
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(parsed);
+  }
+
+  if (span != null && span <= 1000 * 60 * 60 * 24 * 370) {
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+    }).format(parsed);
+  }
+
   return new Intl.DateTimeFormat('en-US', {
     month: 'short',
-    year: '2-digit',
+    year: 'numeric',
   }).format(parsed);
 }
 
@@ -1906,12 +1924,125 @@ function getSharedRiskChangeSummary(previous: SharedRisk, next: SharedRisk) {
   return changes;
 }
 
-function normalizeRiskRecord(input: Partial<Risk> & Record<string, unknown>): Risk {
+type RecordNormalizationContext = {
+  snapshotExportedAt?: string;
+  projectCreatedAt?: string;
+};
+
+function normalizeLegacyTimestamp(value: string | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || /^just now$/i.test(trimmed)) {
+    return null;
+  }
+
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function normalizeDateOnlyTimestamp(value: string | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = new Date(`${trimmed}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function buildNormalizedHistoryEntries(
+  inputHistory: unknown,
+  inferredLastUpdated: string,
+  context: RecordNormalizationContext,
+) {
+  const normalizedEntries = Array.isArray(inputHistory)
+    ? inputHistory
+        .map((entry) =>
+          entry && typeof entry === 'object'
+            ? {
+                label: typeof entry.label === 'string' ? entry.label : 'Updated',
+                meta: typeof entry.meta === 'string' ? entry.meta : 'Local edit',
+                at: normalizeLegacyTimestamp(typeof entry.at === 'string' ? entry.at : undefined) ?? undefined,
+              }
+            : null,
+        )
+        .filter(Boolean) as HistoryEntry[]
+    : [];
+
+  if (normalizedEntries.length === 0) {
+    return [];
+  }
+
+  const hasExplicitTimestamp = normalizedEntries.some((entry) => entry.at);
+  if (hasExplicitTimestamp) {
+    return normalizedEntries.map((entry) => ({
+      ...entry,
+      at: entry.at ?? inferredLastUpdated,
+    }));
+  }
+
+  const oldestFallback =
+    normalizeDateOnlyTimestamp(context.projectCreatedAt) ??
+    normalizeLegacyTimestamp(context.snapshotExportedAt) ??
+    inferredLastUpdated;
+  const startTime = new Date(oldestFallback).getTime();
+  const endTime = new Date(inferredLastUpdated).getTime();
+  const safeStartTime = Number.isFinite(startTime) ? Math.min(startTime, endTime) : endTime;
+  const safeEndTime = Number.isFinite(endTime) ? endTime : Date.now();
+  const span = Math.max(safeEndTime - safeStartTime, 0);
+
+  return normalizedEntries.map((entry, index) => {
+    const factor = normalizedEntries.length === 1 ? 1 : (normalizedEntries.length - 1 - index) / (normalizedEntries.length - 1);
+    return {
+      ...entry,
+      at: new Date(safeStartTime + span * factor).toISOString(),
+    };
+  });
+}
+
+function inferRiskLastUpdated(
+  input: Partial<Risk> & Record<string, unknown>,
+  context: RecordNormalizationContext,
+) {
+  const historyTimestamps = Array.isArray(input.history)
+    ? input.history
+        .map((entry) =>
+          entry && typeof entry === 'object' && typeof entry.at === 'string'
+            ? normalizeLegacyTimestamp(entry.at)
+            : null,
+        )
+        .filter((value): value is string => Boolean(value))
+    : [];
+
+  return (
+    normalizeLegacyTimestamp(typeof input.lastUpdated === 'string' ? input.lastUpdated : undefined) ??
+    historyTimestamps.sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] ??
+    normalizeLegacyTimestamp(typeof input.updatedAt === 'string' ? input.updatedAt : undefined) ??
+    normalizeLegacyTimestamp(typeof input.createdAt === 'string' ? input.createdAt : undefined) ??
+    normalizeDateOnlyTimestamp(context.projectCreatedAt) ??
+    normalizeLegacyTimestamp(context.snapshotExportedAt) ??
+    new Date().toISOString()
+  );
+}
+
+function normalizeRiskRecord(
+  input: Partial<Risk> & Record<string, unknown>,
+  context: RecordNormalizationContext = {},
+): Risk {
   const likelihood = typeof input.likelihood === 'number' ? input.likelihood : 3;
   const impact = typeof input.impact === 'number' ? input.impact : 3;
   const residual = getResidualRating(likelihood, impact);
   const trigger = typeof input.trigger === 'string' ? input.trigger : '';
   const consequence = typeof input.consequence === 'string' ? input.consequence : '';
+  const inferredLastUpdated = inferRiskLastUpdated(input, context);
+  const normalizedHistory = buildNormalizedHistoryEntries(input.history, inferredLastUpdated, context);
 
   return {
     id: typeof input.id === 'string' ? input.id : formatRiskSequence(1),
@@ -1960,7 +2091,7 @@ function normalizeRiskRecord(input: Partial<Risk> & Record<string, unknown>): Ri
         ? input.responseType
         : 'Mitigate',
     project: typeof input.project === 'string' ? input.project : '',
-    lastUpdated: typeof input.lastUpdated === 'string' ? input.lastUpdated : 'Just now',
+    lastUpdated: inferredLastUpdated,
     dueDate: typeof input.dueDate === 'string' ? input.dueDate : '',
     mitigation: typeof input.mitigation === 'string' ? input.mitigation : '',
     contingency: typeof input.contingency === 'string' ? input.contingency : '',
@@ -1969,19 +2100,7 @@ function normalizeRiskRecord(input: Partial<Risk> & Record<string, unknown>): Ri
     comments: typeof input.comments === 'number' ? input.comments : 0,
     createdBy: typeof input.createdBy === 'string' ? input.createdBy : 'Local edit',
     internalOnly: typeof input.internalOnly === 'boolean' ? input.internalOnly : false,
-    history: Array.isArray(input.history)
-      ? input.history
-          .map((entry) =>
-            entry && typeof entry === 'object'
-              ? {
-                  label: typeof entry.label === 'string' ? entry.label : 'Updated',
-                  meta: typeof entry.meta === 'string' ? entry.meta : 'Local edit',
-                  at: typeof entry.at === 'string' ? entry.at : undefined,
-                }
-              : null,
-          )
-          .filter(Boolean) as HistoryEntry[]
-      : [],
+    history: normalizedHistory,
   };
 }
 
@@ -2193,11 +2312,16 @@ function normalizeSharedDecisionRecord(input: Partial<SharedDecision> & Record<s
   };
 }
 
-function normalizeProjectRecord(input: Project): Project {
+function normalizeProjectRecord(input: Project, context: RecordNormalizationContext = {}): Project {
   return {
     ...input,
     risks: Array.isArray(input.risks)
-      ? input.risks.map((risk) => normalizeRiskRecord(risk as Partial<Risk> & Record<string, unknown>))
+      ? input.risks.map((risk) =>
+          normalizeRiskRecord(risk as Partial<Risk> & Record<string, unknown>, {
+            ...context,
+            projectCreatedAt: typeof input.createdAt === 'string' ? input.createdAt : context.projectCreatedAt,
+          }),
+        )
       : [],
     decisions: Array.isArray(input.decisions)
       ? input.decisions.map((decision) =>
@@ -2367,7 +2491,14 @@ function parseAppSnapshot(
     throw new Error('Snapshot does not include any projects.');
   }
 
-  const projects = raw.projects.map((project) => normalizeProjectRecord(project as Project));
+  const snapshotExportedAt = typeof raw.exportedAt === 'string' ? raw.exportedAt : undefined;
+  const projects = raw.projects.map((project) =>
+    normalizeProjectRecord(project as Project, {
+      snapshotExportedAt,
+      projectCreatedAt:
+        project && typeof project === 'object' && typeof project.createdAt === 'string' ? project.createdAt : undefined,
+    }),
+  );
   const activeProjectId =
     typeof raw.activeProjectId === 'string' && projects.some((project) => project.id === raw.activeProjectId)
       ? raw.activeProjectId
@@ -2458,6 +2589,27 @@ function getRiskLabel(risks: Risk[], riskId: string) {
 
 function sanitizeRiskId(value: string) {
   return value.toUpperCase().replace(/\s+/g, '');
+}
+
+function getLocalFileTimestamp(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours24 = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  const meridiem = hours24 >= 12 ? 'PM' : 'AM';
+  const hours12 = hours24 % 12 || 12;
+  const hourToken = String(hours12).padStart(2, '0');
+
+  return `${year}${month}${day}_${hourToken}${minutes}${seconds}${meridiem}`;
+}
+
+function getLocalFileDateStamp(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
 }
 
 function getDecisionPreview(decision: Decision) {
@@ -3703,7 +3855,11 @@ export default function App() {
 
   function downloadSnapshot(snapshot: AppSnapshot, fileName?: string) {
     const json = JSON.stringify(snapshot, null, 2);
-    downloadTextFile(json, fileName ?? `risk-decision-register-snapshot-${new Date().toISOString().slice(0, 10)}.json`, 'application/json');
+    downloadTextFile(
+      json,
+      fileName ?? `risk-decision-register-snapshot-${getLocalFileDateStamp()}.json`,
+      'application/json',
+    );
   }
 
   function downloadTextFile(contents: string, fileName: string, mimeType: string) {
@@ -3804,7 +3960,7 @@ export default function App() {
       return 'No recovery draft is available.';
     }
 
-    const dateStamp = new Date().toISOString().slice(0, 10);
+    const dateStamp = getLocalFileDateStamp();
     downloadSnapshot(recoveryDraft.snapshot, `risk-decision-register-draft-${dateStamp}.json`);
     return 'Recovery draft exported.';
   }
@@ -3825,13 +3981,10 @@ export default function App() {
       lastModifiedBy: editorName.trim() || registrySession.sourceLabel || 'Governance Register',
     });
     const html = buildReadOnlyBoardHtml(snapshot);
-    const timestampToken = exportedAt
-      .replace(/[-:]/g, '')
-      .replace(/\.\d{3}Z$/, 'Z')
-      .replace('T', '_');
+    const timestampToken = getLocalFileTimestamp(new Date(exportedAt));
     const fileName = `${sanitizeFileStem(registrySession.registryName)}_${timestampToken}_read-only.html`;
     downloadTextFile(html, fileName, 'text/html');
-    return `Exported a read-only board view as ${fileName}.`;
+    return `Exported a read-only board view as ${fileName} using your local time.`;
   }
 
   function handlePublishBoard() {
@@ -3877,10 +4030,7 @@ export default function App() {
       },
     );
 
-    const timestampToken = publishedAt
-      .replace(/[-:]/g, '')
-      .replace(/\.\d{3}Z$/, 'Z')
-      .replace('T', '_');
+    const timestampToken = getLocalFileTimestamp(new Date(publishedAt));
     const publishedFileName = `${sanitizeFileStem(registrySession.registryName)}_${timestampToken}_${sanitizeFileStem(
       publishedBy,
     ) || 'editor'}.json`;
@@ -3900,7 +4050,7 @@ export default function App() {
       lastError: '',
     });
 
-    return `Published a new board version as ${publishedFileName}. Share or store that JSON as the next board artifact.`;
+    return `Published a new board version as ${publishedFileName} using your local time. Share or store that JSON as the next board artifact.`;
   }
 
   return (
@@ -6840,7 +6990,9 @@ function RiskRegisterPage({
                           <SeverityBadge severity={risk.severity} />
                         </td>
                         <td className="px-6 py-5 text-sm font-medium text-on-surface">{risk.owner}</td>
-                        <td className="px-6 py-5 text-sm tabular-nums text-on-surface-variant">{risk.lastUpdated}</td>
+                        <td className="px-6 py-5 text-sm tabular-nums text-on-surface-variant">
+                          {formatHistoryTimestamp(risk.lastUpdated)}
+                        </td>
                         <td className="px-6 py-5">
                           {risk.linkedDecision === 'None' ? (
                             <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
@@ -6915,7 +7067,7 @@ function RiskRegisterPage({
                       <SeverityBadge severity={risk.severity} />
                     </td>
                     <td className="px-6 py-5 text-sm font-medium">{risk.owner}</td>
-                    <td className="px-6 py-5 text-sm tabular-nums">{risk.lastUpdated}</td>
+                    <td className="px-6 py-5 text-sm tabular-nums">{formatHistoryTimestamp(risk.lastUpdated)}</td>
                     <td className="px-6 py-5">
                       {risk.linkedDecision === 'None' ? (
                         <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
@@ -9027,8 +9179,15 @@ function RiskBurndownChart({
     Medium: chartSeries.filter((item) => item.severity === 'Medium').length,
     Low: chartSeries.filter((item) => item.severity === 'Low').length,
   };
-  const timelineStart = Math.min(...allPoints.map((point) => new Date(point.at).getTime()));
-  const timelineEnd = Math.max(...allPoints.map((point) => new Date(point.at).getTime()), timelineStart + 1);
+  const rawTimelineStart = Math.min(...allPoints.map((point) => new Date(point.at).getTime()));
+  const rawTimelineEnd = Math.max(...allPoints.map((point) => new Date(point.at).getTime()), rawTimelineStart + 1);
+  const rawTimelineSpan = Math.max(rawTimelineEnd - rawTimelineStart, 1);
+  const timelinePadding =
+    rawTimelineSpan <= 1000 * 60 * 60 * 24
+      ? Math.max(rawTimelineSpan * 0.3, 1000 * 60 * 30)
+      : rawTimelineSpan * 0.08;
+  const timelineStart = rawTimelineStart - timelinePadding;
+  const timelineEnd = rawTimelineEnd + timelinePadding;
   const width = 1240;
   const height = showLegend ? 600 : 430;
   const paddingLeft = 58;
@@ -9149,7 +9308,7 @@ function RiskBurndownChart({
                 x={xForTime(tick)}
                 y={xAxisLabelY}
               >
-                {formatBurndownDateLabel(new Date(tick).toISOString())}
+                {formatBurndownDateLabel(new Date(tick).toISOString(), rawTimelineStart, rawTimelineEnd)}
               </text>
             </g>
           ))}
