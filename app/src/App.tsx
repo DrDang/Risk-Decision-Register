@@ -1,6 +1,6 @@
-import {type ChangeEvent, type ReactNode, useEffect, useRef, useState} from 'react';
+import {type ChangeEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject, useEffect, useRef, useState} from 'react';
 
-type View = 'risk' | 'decision' | 'library' | 'snapshot' | 'settings';
+type View = 'risk' | 'decision' | 'analytics' | 'library' | 'snapshot' | 'settings';
 
 type RiskStatus = 'Pending' | 'Active' | 'Monitoring' | 'Rejected' | 'Closed';
 type RiskSeverity = 'High' | 'Medium' | 'Low';
@@ -1140,6 +1140,24 @@ type HeatmapCell = {
   impact: number;
 };
 
+type BurndownTimeframe = '3m' | '6m' | '12m' | 'all';
+
+type RiskBurndownPoint = {
+  at: string;
+  likelihood: number;
+  impact: number;
+  score: number;
+  severity: RiskSeverity;
+  label: string;
+  rationale: string;
+  source: 'initial' | 'likelihood' | 'impact' | 'current';
+};
+
+type SelectedBurndownPoint = {
+  riskId: string;
+  at: string;
+};
+
 function formatDisplayDate(value: string) {
   if (!value) {
     return 'Not set';
@@ -1174,6 +1192,204 @@ function formatHistoryTimestamp(value: string) {
 
 function createHistoryEntry(label: string, meta: string, at = new Date().toISOString()): HistoryEntry {
   return {label, meta, at};
+}
+
+function parseScoreChangeHistoryEntry(entry: HistoryEntry) {
+  const match = entry.label.match(/^(Likelihood|Impact) updated \((\d+)[\s\S]*?→\s*(\d+)/i);
+  if (!match) {
+    return null;
+  }
+
+  const rationaleMatch = entry.label.match(/Rationale:\s*([\s\S]+)$/i);
+  const field: RiskBurndownPoint['source'] = match[1].toLowerCase() === 'likelihood' ? 'likelihood' : 'impact';
+  const previousValue = Number(match[2]);
+  const nextValue = Number(match[3]);
+
+  if (!Number.isFinite(previousValue) || !Number.isFinite(nextValue)) {
+    return null;
+  }
+
+  return {
+    field,
+    previousValue,
+    nextValue,
+    rationale: rationaleMatch?.[1]?.trim() ?? '',
+    at: entry.at ?? '',
+  };
+}
+
+function buildRiskBurndownTimeline(risk: Risk): RiskBurndownPoint[] {
+  const fallbackTimestamp = new Date().toISOString();
+  const normalizedLastUpdated = normalizeBurndownTimestamp(risk.lastUpdated, fallbackTimestamp);
+  const historyWithTimestamps = risk.history
+    .filter((entry) => entry.at)
+    .map((entry) => ({
+      ...entry,
+      at: normalizeBurndownTimestamp(entry.at, normalizedLastUpdated),
+    }))
+    .sort((left, right) => new Date(right.at ?? '').getTime() - new Date(left.at ?? '').getTime());
+  const scoreChanges = historyWithTimestamps.reduce<
+    {entry: {label: string; meta: string; at: string}; parsed: NonNullable<ReturnType<typeof parseScoreChangeHistoryEntry>>}[]
+  >((items, entry) => {
+    const parsed = parseScoreChangeHistoryEntry(entry);
+    if (parsed) {
+      items.push({
+        entry: {
+          label: entry.label,
+          meta: entry.meta,
+          at: entry.at ?? normalizedLastUpdated,
+        },
+        parsed,
+      });
+    }
+    return items;
+  }, []);
+
+  let workingLikelihood = risk.likelihood;
+  let workingImpact = risk.impact;
+  const pointsDescending: RiskBurndownPoint[] = [];
+
+  scoreChanges.forEach(({entry, parsed}) => {
+    const afterChangeScore = workingLikelihood * workingImpact;
+    pointsDescending.push({
+      at: normalizeBurndownTimestamp(entry.at, normalizedLastUpdated),
+      likelihood: workingLikelihood,
+      impact: workingImpact,
+      score: afterChangeScore,
+      severity: getSeverityFromAssessment(workingLikelihood, workingImpact),
+      label: `${parsed.field === 'likelihood' ? 'Likelihood' : 'Impact'} updated`,
+      rationale: parsed.rationale,
+      source: parsed.field,
+    });
+
+    if (parsed.field === 'likelihood') {
+      workingLikelihood = parsed.previousValue;
+    } else {
+      workingImpact = parsed.previousValue;
+    }
+  });
+
+  const oldestHistoryAt =
+    [...historyWithTimestamps].sort((left, right) => new Date(left.at ?? '').getTime() - new Date(right.at ?? '').getTime())[0]?.at ??
+    normalizedLastUpdated;
+
+  const initialScore = workingLikelihood * workingImpact;
+  const ascendingPoints: RiskBurndownPoint[] = [
+    {
+      at: oldestHistoryAt,
+      likelihood: workingLikelihood,
+      impact: workingImpact,
+      score: initialScore,
+      severity: getSeverityFromAssessment(workingLikelihood, workingImpact),
+      label: 'Initial recorded score',
+      rationale: '',
+      source: 'initial',
+    },
+    ...pointsDescending.reverse(),
+  ];
+
+  const latestPoint = ascendingPoints[ascendingPoints.length - 1];
+  if (latestPoint && latestPoint.at !== normalizedLastUpdated) {
+    ascendingPoints.push({
+      at: normalizedLastUpdated,
+      likelihood: risk.likelihood,
+      impact: risk.impact,
+      score: risk.likelihood * risk.impact,
+      severity: risk.severity,
+      label: 'Current score',
+      rationale: '',
+      source: 'current',
+    });
+  }
+
+  if (ascendingPoints.length === 1 && ascendingPoints[0].at !== normalizedLastUpdated) {
+    ascendingPoints.push({
+      at: normalizedLastUpdated,
+      likelihood: risk.likelihood,
+      impact: risk.impact,
+      score: risk.likelihood * risk.impact,
+      severity: risk.severity,
+      label: 'Current score',
+      rationale: '',
+      source: 'current',
+    });
+  }
+
+  return ascendingPoints.sort((left, right) => new Date(left.at).getTime() - new Date(right.at).getTime());
+}
+
+function getBurndownRangeStart(timeframe: BurndownTimeframe) {
+  if (timeframe === 'all') {
+    return null;
+  }
+
+  const months = timeframe === '3m' ? 3 : timeframe === '6m' ? 6 : 12;
+  const boundary = new Date();
+  boundary.setMonth(boundary.getMonth() - months);
+  return boundary;
+}
+
+function filterBurndownPoints(points: RiskBurndownPoint[], timeframe: BurndownTimeframe) {
+  const boundary = getBurndownRangeStart(timeframe);
+  if (!boundary || points.length === 0) {
+    return points;
+  }
+
+  const boundaryTime = boundary.getTime();
+  const visiblePoints = points.filter((point) => new Date(point.at).getTime() >= boundaryTime);
+  const previousPoint = [...points]
+    .reverse()
+    .find((point) => new Date(point.at).getTime() < boundaryTime);
+
+  if (!previousPoint) {
+    return visiblePoints;
+  }
+
+  return [
+    {
+      ...previousPoint,
+      at: boundary.toISOString(),
+      label: previousPoint.label === 'Current score' ? 'Score at timeframe boundary' : previousPoint.label,
+      rationale: '',
+      source: 'current' as const,
+    },
+    ...visiblePoints,
+  ];
+}
+
+function getDefaultBurndownRiskIds(risks: Risk[]) {
+  const activeRisks = risks.filter((risk) => risk.status !== 'Closed' && risk.status !== 'Rejected');
+  const prioritized = [...activeRisks].sort((left, right) => {
+    const scoreDifference = right.likelihood * right.impact - left.likelihood * left.impact;
+    if (scoreDifference !== 0) {
+      return scoreDifference;
+    }
+
+    return new Date(right.lastUpdated).getTime() - new Date(left.lastUpdated).getTime();
+  });
+
+  return prioritized.slice(0, 4).map((risk) => risk.id);
+}
+
+function formatBurndownDateLabel(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    year: '2-digit',
+  }).format(parsed);
+}
+
+function normalizeBurndownTimestamp(value: string | undefined, fallback: string) {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed.toISOString();
 }
 
 function getSeverityFromAssessment(likelihood: number, impact: number): RiskSeverity {
@@ -1550,6 +1766,69 @@ async function renderHeatmapToPngBlob(
       resolve(blob);
     }, 'image/png');
   });
+}
+
+async function renderSvgElementToPngBlob(svg: SVGSVGElement): Promise<Blob> {
+  const serializer = new XMLSerializer();
+  const exportSvg = svg.cloneNode(true) as SVGSVGElement;
+  exportSvg.setAttribute('font-family', 'Inter, sans-serif');
+  exportSvg.style.fontFamily = 'Inter, sans-serif';
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+  style.textContent = `
+    text, tspan {
+      font-family: "Inter", sans-serif;
+    }
+
+    [data-export-font="headline"] {
+      font-family: "Manrope", sans-serif;
+    }
+  `;
+  defs.appendChild(style);
+  exportSvg.insertBefore(defs, exportSvg.firstChild);
+
+  const svgMarkup = serializer.serializeToString(exportSvg);
+  const svgBlob = new Blob([svgMarkup], {type: 'image/svg+xml;charset=utf-8'});
+  const svgUrl = window.URL.createObjectURL(svgBlob);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => reject(new Error('SVG rendering failed'));
+      nextImage.src = svgUrl;
+    });
+
+    const viewBox = svg.viewBox.baseVal;
+    const width = viewBox && viewBox.width ? viewBox.width : svg.clientWidth || 980;
+    const height = viewBox && viewBox.height ? viewBox.height : svg.clientHeight || 320;
+    const scale = 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('Canvas context unavailable');
+    }
+
+    ctx.scale(scale, scale);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(image, 0, 0, width, height);
+
+    return new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error('PNG generation failed'));
+          return;
+        }
+        resolve(blob);
+      }, 'image/png');
+    });
+  } finally {
+    window.URL.revokeObjectURL(svgUrl);
+  }
 }
 
 
@@ -3705,6 +3984,10 @@ export default function App() {
                 projects={projects}
                 activeProjectId={activeProject.id}
               />
+            ) : view === 'analytics' ? (
+              <TrendsAnalyticsPage
+                risks={riskRecords}
+              />
             ) : view === 'library' ? (
               <SharedLibraryPage
                 activeProject={activeProject}
@@ -3833,6 +4116,7 @@ function Sidebar({
   const navItems: {id: View; label: string; icon: string}[] = [
     {id: 'risk', label: 'Risk Register', icon: 'security'},
     {id: 'decision', label: 'Decision Register', icon: 'gavel'},
+    {id: 'analytics', label: 'Trends / Analytics', icon: 'insights'},
     {id: 'library', label: 'Shared Library', icon: 'hub'},
     {id: 'snapshot', label: 'Registry Source', icon: 'sync_alt'},
     {id: 'settings', label: 'Settings', icon: 'tune'},
@@ -4166,6 +4450,8 @@ function TopNav({
               ? 'Operational View'
               : view === 'decision'
                 ? 'Decision Review'
+                : view === 'analytics'
+                  ? 'Trends / Analytics'
                 : view === 'library'
                   ? 'Cross-Project Library'
                 : view === 'snapshot'
@@ -4302,6 +4588,13 @@ function TopNav({
                   <div className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Risk Register</div>
                   <p>
                     Log risks from the main action button, review them in the table, and click a row to open the right-side drawer for scoring, ownership, response, and history updates.
+                  </p>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Trends / Analytics</div>
+                  <p>
+                    Use the analytics page to review risk burndown trends over time, compare selected risks, and inspect the rationale behind recorded score changes.
                   </p>
                 </div>
 
@@ -4855,6 +5148,470 @@ function SettingsPage({
             title="Impact Definitions"
           />
         </div>
+      </section>
+    </div>
+  );
+}
+
+function TrendsAnalyticsPage({
+  risks,
+}: {
+  risks: Risk[];
+}) {
+  const burndownTimeframe: BurndownTimeframe = 'all';
+  const [selectedBurndownRiskIds, setSelectedBurndownRiskIds] = useState<string[]>(() =>
+    risks.map((risk) => risk.id),
+  );
+  const [selectedBurndownPoint, setSelectedBurndownPoint] = useState<SelectedBurndownPoint | null>(null);
+  const [riskSelectorOpen, setRiskSelectorOpen] = useState(false);
+  const [burndownExportMenuOpen, setBurndownExportMenuOpen] = useState(false);
+  const [burndownExportState, setBurndownExportState] = useState<'idle' | 'copied' | 'copy-failed'>('idle');
+  const [burndownCopyError, setBurndownCopyError] = useState('');
+  const [focusedBurndownRiskId, setFocusedBurndownRiskId] = useState<string>('');
+  const [burndownShowExportLegend, setBurndownShowExportLegend] = useState(false);
+  const riskSelectorRef = useRef<HTMLDivElement | null>(null);
+  const burndownExportMenuRef = useRef<HTMLDivElement | null>(null);
+  const burndownChartRef = useRef<SVGSVGElement | null>(null);
+
+  const burndownRiskOptions = [...risks].sort((left, right) => {
+    const leftRetired = left.status === 'Closed' || left.status === 'Rejected';
+    const rightRetired = right.status === 'Closed' || right.status === 'Rejected';
+    if (leftRetired !== rightRetired) {
+      return leftRetired ? 1 : -1;
+    }
+
+    return right.likelihood * right.impact - left.likelihood * left.impact;
+  });
+  const burndownSeries = burndownRiskOptions
+    .filter((risk) => selectedBurndownRiskIds.includes(risk.id))
+    .map((risk) => ({
+      risk,
+      points: filterBurndownPoints(buildRiskBurndownTimeline(risk), burndownTimeframe),
+    }))
+    .filter((series) => series.points.length > 0);
+  const selectedBurndownPointDetail = selectedBurndownPoint
+    ? burndownSeries
+        .flatMap((series) =>
+          series.points.map((point) => ({
+            risk: series.risk,
+            point,
+          })),
+        )
+        .find((item) => item.risk.id === selectedBurndownPoint.riskId && item.point.at === selectedBurndownPoint.at) ?? null
+    : null;
+  const focusedBurndownSeries =
+    burndownSeries.find((series) => series.risk.id === focusedBurndownRiskId) ??
+    (selectedBurndownPointDetail
+      ? burndownSeries.find((series) => series.risk.id === selectedBurndownPointDetail.risk.id) ?? null
+      : burndownSeries[0] ?? null);
+
+  useEffect(() => {
+    const availableIds = new Set(risks.map((risk) => risk.id));
+    setSelectedBurndownRiskIds((current) => {
+      const retained = current.filter((riskId) => availableIds.has(riskId));
+      if (retained.length > 0) {
+        return retained;
+      }
+
+      return risks.map((risk) => risk.id);
+    });
+  }, [risks]);
+
+  useEffect(() => {
+    if (!selectedBurndownPoint) {
+      return;
+    }
+
+    const stillExists = burndownSeries.some(
+      (series) =>
+        series.risk.id === selectedBurndownPoint.riskId &&
+        series.points.some((point) => point.at === selectedBurndownPoint.at),
+    );
+
+    if (!stillExists) {
+      setSelectedBurndownPoint(null);
+    }
+  }, [burndownSeries, selectedBurndownPoint]);
+
+  useEffect(() => {
+    if (!riskSelectorOpen) {
+      return undefined;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!riskSelectorRef.current?.contains(event.target as Node)) {
+        setRiskSelectorOpen(false);
+      }
+    }
+
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => window.removeEventListener('mousedown', handlePointerDown);
+  }, [riskSelectorOpen]);
+
+  useEffect(() => {
+    if (!burndownExportMenuOpen) {
+      return undefined;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!burndownExportMenuRef.current?.contains(event.target as Node)) {
+        setBurndownExportMenuOpen(false);
+      }
+    }
+
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => window.removeEventListener('mousedown', handlePointerDown);
+  }, [burndownExportMenuOpen]);
+
+  useEffect(() => {
+    if (burndownExportState === 'idle') {
+      setBurndownCopyError('');
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => setBurndownExportState('idle'), 1800);
+    return () => window.clearTimeout(timeoutId);
+  }, [burndownExportState]);
+
+  useEffect(() => {
+    if (selectedBurndownPointDetail) {
+      setFocusedBurndownRiskId(selectedBurndownPointDetail.risk.id);
+      return;
+    }
+
+    if (!focusedBurndownSeries && burndownSeries[0]) {
+      setFocusedBurndownRiskId(burndownSeries[0].risk.id);
+    }
+  }, [burndownSeries, focusedBurndownSeries, selectedBurndownPointDetail]);
+
+  async function handleCopyBurndownChart() {
+    if (!window.isSecureContext) {
+      setBurndownCopyError('Image copy requires a secure browser context such as localhost or HTTPS.');
+      setBurndownExportState('copy-failed');
+      return;
+    }
+
+    if (!('ClipboardItem' in window) || !navigator.clipboard?.write) {
+      setBurndownCopyError('This browser does not support copying images to the clipboard.');
+      setBurndownExportState('copy-failed');
+      return;
+    }
+
+    if (!burndownChartRef.current) {
+      setBurndownCopyError('The burndown chart is not available to export yet.');
+      setBurndownExportState('copy-failed');
+      return;
+    }
+
+    try {
+      setBurndownShowExportLegend(true);
+      await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+      const blob = await renderSvgElementToPngBlob(burndownChartRef.current);
+      const clipboardSupportsPng =
+        typeof ClipboardItem !== 'undefined' &&
+        typeof ClipboardItem.supports === 'function' &&
+        ClipboardItem.supports('image/png');
+
+      if (!clipboardSupportsPng) {
+        setBurndownCopyError('This browser supports clipboard access, but not PNG image copy.');
+        setBurndownExportState('copy-failed');
+        return;
+      }
+
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'image/png': blob,
+        }),
+      ]);
+      setBurndownExportState('copied');
+      setBurndownExportMenuOpen(false);
+    } catch (error) {
+      if (error instanceof Error && error.message) {
+        setBurndownCopyError(`Image copy failed: ${error.message}`);
+      } else {
+        setBurndownCopyError('The browser blocked image clipboard access for this page.');
+      }
+      setBurndownExportState('copy-failed');
+    } finally {
+      setBurndownShowExportLegend(false);
+    }
+  }
+
+  async function handleDownloadBurndownPng() {
+    if (!burndownChartRef.current) {
+      return;
+    }
+
+    try {
+      setBurndownShowExportLegend(true);
+      await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+      const blob = await renderSvgElementToPngBlob(burndownChartRef.current);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'risk-burndown-chart.png';
+      anchor.click();
+      window.URL.revokeObjectURL(url);
+      setBurndownExportMenuOpen(false);
+    } catch {
+      // silently ignore download errors
+    } finally {
+      setBurndownShowExportLegend(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-[1500px] px-8 py-8">
+      <div className="mb-8 flex items-end justify-between gap-6">
+        <div>
+          <h1 className="font-headline text-4xl font-extrabold tracking-tight text-on-surface">
+            Trends / Analytics
+          </h1>
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-on-surface-variant">
+            Review how project risks have moved over time based on recorded likelihood and impact changes. Use this page for trend review and risk-retirement conversations without crowding the working register.
+          </p>
+        </div>
+      </div>
+
+      <section className="mb-5 rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Risk Burndown</div>
+            <div className="mt-1 text-sm leading-relaxed text-on-surface-variant">
+              Track how selected project risks change over time based on recorded likelihood and impact updates. Click a score-change point to inspect the associated rationale.
+            </div>
+            {burndownExportState !== 'idle' ? (
+              <div
+                className={`mt-2 text-[11px] font-semibold ${
+                  burndownExportState === 'copied' ? 'text-emerald-700' : 'text-amber-700'
+                }`}
+              >
+                {burndownExportState === 'copied'
+                  ? 'Burndown chart image copied to clipboard'
+                  : burndownCopyError}
+              </div>
+            ) : null}
+          </div>
+          <div className="flex w-full flex-wrap items-end justify-between gap-4">
+            <div className="w-full max-w-[24rem]" ref={riskSelectorRef}>
+              <label className="block">
+                <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Risks Shown</div>
+                <div className="relative">
+                  <button
+                    aria-expanded={riskSelectorOpen}
+                    aria-haspopup="listbox"
+                    className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm text-on-surface outline-none transition hover:bg-white focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
+                    onClick={() => setRiskSelectorOpen((current) => !current)}
+                    type="button"
+                  >
+                    <span className="truncate">
+                      {selectedBurndownRiskIds.length === 0
+                        ? 'No risks selected'
+                        : selectedBurndownRiskIds.length === burndownRiskOptions.length
+                          ? 'All risks selected'
+                          : `${selectedBurndownRiskIds.length} risks selected`}
+                    </span>
+                    <span className="material-symbols-outlined text-[18px] text-slate-500">
+                      {riskSelectorOpen ? 'expand_less' : 'expand_more'}
+                    </span>
+                  </button>
+                  {riskSelectorOpen ? (
+                    <div className="absolute right-0 top-[calc(100%+0.5rem)] z-20 w-full rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_20px_60px_rgba(42,52,57,0.16)]">
+                      <div className="max-h-72 overflow-y-auto pr-1">
+                        <div className="mb-2 flex items-center justify-between px-2 pt-1">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                            Select Risks
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-200"
+                              onClick={() => setSelectedBurndownRiskIds([])}
+                              type="button"
+                            >
+                              Clear
+                            </button>
+                            <button
+                              className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-200"
+                              onClick={() => setSelectedBurndownRiskIds(burndownRiskOptions.map((risk) => risk.id))}
+                              type="button"
+                            >
+                              All
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          {burndownRiskOptions.map((risk) => {
+                            const checked = selectedBurndownRiskIds.includes(risk.id);
+                            const retired = risk.status === 'Closed' || risk.status === 'Rejected';
+                            return (
+                              <label
+                                key={risk.id}
+                                className="flex cursor-pointer items-start gap-3 rounded-xl px-3 py-2.5 transition hover:bg-slate-50"
+                              >
+                                <input
+                                  checked={checked}
+                                  className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-primary"
+                                  onChange={() =>
+                                    setSelectedBurndownRiskIds((current) =>
+                                      checked ? current.filter((riskId) => riskId !== risk.id) : [...current, risk.id],
+                                    )
+                                  }
+                                  type="checkbox"
+                                />
+                                <div className="min-w-0">
+                                  <div className={`text-sm font-semibold ${retired ? 'text-slate-500' : 'text-on-surface'}`}>
+                                    {risk.id} - {risk.title}
+                                  </div>
+                                  <div className="mt-0.5 text-xs text-on-surface-variant">
+                                    {risk.status}
+                                    {retired ? ' · Retired' : ''}
+                                  </div>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </label>
+            </div>
+            <div className="relative" ref={burndownExportMenuRef}>
+              <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Export</div>
+              <button
+                aria-expanded={burndownExportMenuOpen}
+                aria-haspopup="menu"
+                className="flex min-h-[50px] items-center gap-2 rounded-2xl bg-slate-100 px-4 py-3 text-left text-sm font-semibold text-on-surface transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={burndownSeries.length === 0}
+                onClick={() => setBurndownExportMenuOpen((current) => !current)}
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[18px] text-slate-500">ios_share</span>
+                Export Chart
+                <span className="material-symbols-outlined text-[18px] text-slate-500">
+                  {burndownExportMenuOpen ? 'expand_less' : 'expand_more'}
+                </span>
+              </button>
+              {burndownExportMenuOpen ? (
+                <div className="absolute right-0 top-[calc(100%+0.5rem)] z-20 min-w-[220px] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_20px_60px_rgba(42,52,57,0.16)]">
+                  <button
+                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[11px] font-semibold text-on-surface transition hover:bg-slate-50"
+                    onClick={handleCopyBurndownChart}
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[16px] text-slate-500">content_copy</span>
+                    Copy image to clipboard
+                  </button>
+                  <button
+                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[11px] font-semibold text-on-surface transition hover:bg-slate-50"
+                    onClick={handleDownloadBurndownPng}
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[16px] text-slate-500">download</span>
+                    Download as PNG
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <RiskBurndownChart
+          chartRef={burndownChartRef}
+          highlightedRiskId={focusedBurndownSeries?.risk.id ?? null}
+          selectedPoint={selectedBurndownPoint}
+          showLegend={burndownShowExportLegend}
+          series={burndownSeries.map((series) => ({
+            riskId: series.risk.id,
+            title: series.risk.title,
+            severity: series.risk.severity,
+            status: series.risk.status,
+            points: series.points,
+          }))}
+          onSelectRisk={(riskId) => {
+            setFocusedBurndownRiskId(riskId);
+            if (selectedBurndownPoint?.riskId && selectedBurndownPoint.riskId !== riskId) {
+              setSelectedBurndownPoint(null);
+            }
+          }}
+          onSelectPoint={(point) => setSelectedBurndownPoint(point)}
+        />
+
+        {focusedBurndownSeries ? (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Focused Risk Timeline</div>
+                <div className="mt-1 text-sm font-semibold text-on-surface">
+                  {focusedBurndownSeries.risk.id} · {focusedBurndownSeries.risk.title}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {burndownSeries.map((series, index) => (
+                  <button
+                    key={series.risk.id}
+                    className={`rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] transition ${
+                      focusedBurndownSeries.risk.id === series.risk.id
+                        ? 'bg-primary text-white'
+                        : 'bg-white text-slate-700 hover:bg-slate-100'
+                    }`}
+                    onClick={() => {
+                      setFocusedBurndownRiskId(series.risk.id);
+                      if (selectedBurndownPoint?.riskId && selectedBurndownPoint.riskId !== series.risk.id) {
+                        setSelectedBurndownPoint(null);
+                      }
+                    }}
+                    type="button"
+                  >
+                    <span
+                      className="mr-1.5 inline-block h-2 w-2 rounded-full"
+                      style={{backgroundColor: ['#0f8f4f', '#2563eb', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#4f46e5', '#be123c'][index % 8]}}
+                    />
+                    {series.risk.id}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="w-full overflow-x-auto pb-1">
+              <div className="flex w-max gap-3">
+                {focusedBurndownSeries.points.map((point) => {
+                  const selected =
+                    selectedBurndownPoint?.riskId === focusedBurndownSeries.risk.id &&
+                    selectedBurndownPoint.at === point.at;
+                  return (
+                    <button
+                      key={`${focusedBurndownSeries.risk.id}-${point.at}`}
+                      className={`w-[220px] shrink-0 rounded-2xl border px-4 py-3 text-left transition ${
+                        selected
+                          ? 'border-primary bg-primary/5 shadow-[0_8px_24px_rgba(79,94,126,0.14)]'
+                          : 'border-slate-200 bg-white hover:border-primary/30 hover:bg-slate-50'
+                      }`}
+                      onClick={() => setSelectedBurndownPoint({riskId: focusedBurndownSeries.risk.id, at: point.at})}
+                      type="button"
+                    >
+                      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                        {formatHistoryTimestamp(point.at)}
+                      </div>
+                      <div className="mt-2 text-base font-extrabold text-on-surface">
+                        {point.score}
+                      </div>
+                      <div className="mt-1 text-sm font-semibold text-on-surface">
+                        Likelihood {point.likelihood} / Impact {point.impact}
+                      </div>
+                      <div className="mt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                        {point.label}
+                      </div>
+                      <div className="mt-2 line-clamp-4 text-sm leading-relaxed text-on-surface-variant">
+                        {point.rationale || 'No rationale recorded for this point.'}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </section>
     </div>
   );
@@ -8218,6 +8975,378 @@ function SeverityBreakdownChart({
             <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">{bar.label}</div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function RiskBurndownChart({
+  chartRef,
+  highlightedRiskId,
+  series,
+  selectedPoint,
+  showLegend,
+  onSelectRisk,
+  onSelectPoint,
+}: {
+  chartRef: RefObject<SVGSVGElement | null>;
+  highlightedRiskId: string | null;
+  series: {
+    riskId: string;
+    title: string;
+    severity: RiskSeverity;
+    status: RiskStatus;
+    points: RiskBurndownPoint[];
+  }[];
+  selectedPoint: SelectedBurndownPoint | null;
+  showLegend: boolean;
+  onSelectRisk: (riskId: string) => void;
+  onSelectPoint: (point: SelectedBurndownPoint) => void;
+}) {
+  const [hoveredRiskId, setHoveredRiskId] = useState<string | null>(null);
+  const [hoverCard, setHoverCard] = useState<{x: number; y: number; riskId: string; title: string} | null>(null);
+  const chartSeries = series.filter((item) => item.points.length > 0);
+  const allPoints = chartSeries.flatMap((item) =>
+    item.points.map((point) => ({
+      ...point,
+      riskId: item.riskId,
+      title: item.title,
+    })),
+  );
+
+  if (chartSeries.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-10 text-sm leading-relaxed text-on-surface-variant">
+        No risks are selected for the burndown view yet. Choose one or more risks above to plot how their scores changed over time.
+      </div>
+    );
+  }
+
+  const severityCounts = {
+    High: chartSeries.filter((item) => item.severity === 'High').length,
+    Medium: chartSeries.filter((item) => item.severity === 'Medium').length,
+    Low: chartSeries.filter((item) => item.severity === 'Low').length,
+  };
+  const timelineStart = Math.min(...allPoints.map((point) => new Date(point.at).getTime()));
+  const timelineEnd = Math.max(...allPoints.map((point) => new Date(point.at).getTime()), timelineStart + 1);
+  const width = 1240;
+  const height = showLegend ? 600 : 430;
+  const paddingLeft = 58;
+  const paddingRight = 24;
+  const paddingTop = 54;
+  const paddingBottom = showLegend ? 230 : 60;
+  const panelWidth = 168;
+  const panelGap = 22;
+  const plotRight = width - paddingRight - panelWidth - panelGap;
+  const plotWidth = plotRight - paddingLeft;
+  const plotHeight = height - paddingTop - paddingBottom;
+  const scoreBands = [
+    {from: 0, to: 8, fill: '#d8f0df'},
+    {from: 8, to: 15, fill: '#fff5bf'},
+    {from: 15, to: 25, fill: '#ffd9d9'},
+  ];
+  const colorPalette = ['#0f8f4f', '#2563eb', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#4f46e5', '#be123c'];
+  const yForScore = (score: number) => paddingTop + plotHeight - (score / 25) * plotHeight;
+  const xForTime = (value: number) =>
+    paddingLeft + ((Math.max(Math.min(value, timelineEnd), timelineStart) - timelineStart) / Math.max(timelineEnd - timelineStart, 1)) * plotWidth;
+  const xTicks = Array.from({length: 5}, (_, index) => timelineStart + ((timelineEnd - timelineStart) * index) / 4);
+  const panelX = plotRight + panelGap;
+  const legendColumns = 1;
+  const legendColumnWidth = plotRight - paddingLeft;
+  const xAxisLabelY = paddingTop + plotHeight + 30;
+  const legendTitleY = paddingTop + plotHeight + 72;
+  const legendStartY = paddingTop + plotHeight + 106;
+  const activeRiskId = hoveredRiskId ?? highlightedRiskId;
+
+  function showHoverCard(event: ReactMouseEvent<SVGElement>, riskId: string, title: string) {
+    const bounds = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
+    if (!bounds) {
+      return;
+    }
+
+    setHoverCard({
+      x: Math.min(event.clientX - bounds.left + 16, bounds.width - 220),
+      y: Math.min(event.clientY - bounds.top + 16, bounds.height - 88),
+      riskId,
+      title,
+    });
+  }
+
+  return (
+    <div className="relative rounded-2xl bg-slate-50 px-4 py-4">
+      <div className="w-full overflow-hidden">
+        <svg
+          className="block h-auto w-full"
+          ref={chartRef}
+          preserveAspectRatio="xMidYMin meet"
+          role="img"
+          viewBox={`0 0 ${width} ${height}`}
+        >
+          <text
+            data-export-font="headline"
+            fill="#243342"
+            fontSize="22"
+            fontWeight="800"
+            textAnchor="middle"
+            x={paddingLeft + plotWidth / 2}
+            y={28}
+          >
+            Risk Burndown
+          </text>
+          <text
+            fill="#64748b"
+            fontSize="11"
+            fontWeight="700"
+            textAnchor="middle"
+            x={paddingLeft + plotWidth / 2}
+            y={44}
+          >
+            Selected risks with recorded score history
+          </text>
+
+          {scoreBands.map((band) => (
+            <rect
+              key={`${band.from}-${band.to}`}
+              fill={band.fill}
+              height={yForScore(band.from) - yForScore(band.to)}
+              rx="10"
+              width={plotWidth}
+              x={paddingLeft}
+              y={yForScore(band.to)}
+            />
+          ))}
+
+          {[0, 5, 10, 15, 20, 25].map((tick) => (
+            <g key={tick}>
+              <line
+                stroke="#cbd5e1"
+                strokeDasharray={tick === 0 ? '0' : '4 6'}
+                x1={paddingLeft}
+                x2={plotRight}
+                y1={yForScore(tick)}
+                y2={yForScore(tick)}
+              />
+              <text
+                fill="#64748b"
+                fontSize="11"
+                fontWeight="700"
+                textAnchor="end"
+                x={paddingLeft - 10}
+                y={yForScore(tick) + 4}
+              >
+                {tick}
+              </text>
+            </g>
+          ))}
+
+          {xTicks.map((tick) => (
+            <g key={tick}>
+              <text
+                fill="#64748b"
+                fontSize="11"
+                fontWeight="700"
+                textAnchor="middle"
+                x={xForTime(tick)}
+                y={xAxisLabelY}
+              >
+                {formatBurndownDateLabel(new Date(tick).toISOString())}
+              </text>
+            </g>
+          ))}
+
+          <text
+            fill="#64748b"
+            fontSize="11"
+            fontWeight="700"
+            textAnchor="middle"
+            transform={`translate(16 ${paddingTop + plotHeight / 2}) rotate(-90)`}
+          >
+            Risk Score
+          </text>
+
+          <line
+            stroke="#cbd5e1"
+            strokeWidth="1"
+            x1={panelX - panelGap / 2}
+            x2={panelX - panelGap / 2}
+            y1={paddingTop}
+            y2={paddingTop + plotHeight}
+          />
+
+          <text
+            fill="#64748b"
+            fontSize="10"
+            fontWeight="800"
+            letterSpacing="1.5"
+            textAnchor="start"
+            x={panelX}
+            y={paddingTop + 2}
+          >
+            SEVERITY COUNTS
+          </text>
+          {[
+            {label: 'High', value: severityCounts.High, color: '#dc2626', y: (yForScore(25) + yForScore(15)) / 2},
+            {label: 'Medium', value: severityCounts.Medium, color: '#d97706', y: (yForScore(15) + yForScore(8)) / 2},
+            {label: 'Low', value: severityCounts.Low, color: '#059669', y: (yForScore(8) + yForScore(0)) / 2},
+          ].map((band) => (
+            <g key={band.label}>
+              <circle cx={panelX + 6} cy={band.y - 6} fill={band.color} r="5" />
+              <text fill="#243342" fontSize="12" fontWeight="800" x={panelX + 18} y={band.y - 2}>
+                {band.label}: {band.value}
+              </text>
+            </g>
+          ))}
+
+          {showLegend ? (
+            <>
+              <text
+                fill="#64748b"
+                fontSize="10"
+                fontWeight="800"
+                letterSpacing="1.5"
+                textAnchor="start"
+                x={paddingLeft}
+                y={legendTitleY}
+              >
+                RISK LEGEND
+              </text>
+              {chartSeries.slice(0, 8).map((item, index) => {
+                const columnIndex = index % legendColumns;
+                const rowIndex = Math.floor(index / legendColumns);
+                const legendY = legendStartY + rowIndex * 34;
+                const legendX = paddingLeft + columnIndex * legendColumnWidth;
+                const color = colorPalette[index % colorPalette.length];
+                return (
+                  <g key={`legend-${item.riskId}`}>
+                    <line stroke={color} strokeLinecap="round" strokeWidth="4" x1={legendX} x2={legendX + 18} y1={legendY} y2={legendY} />
+                    <circle cx={legendX + 9} cy={legendY} fill={color} r="4" />
+                    <text fill="#243342" fontSize="11" fontWeight="800" x={legendX + 26} y={legendY + 4}>
+                      {item.riskId}
+                    </text>
+                    <text fill="#64748b" fontSize="10" x={legendX + 26} y={legendY + 18}>
+                      {item.title.length > 64 ? `${item.title.slice(0, 64)}…` : item.title}
+                    </text>
+                  </g>
+                );
+              })}
+            </>
+          ) : null}
+
+          {chartSeries.map((item, index) => {
+            const color = colorPalette[index % colorPalette.length];
+            const isActive = !activeRiskId || activeRiskId === item.riskId;
+            const path = item.points
+              .map((point, pointIndex) => {
+                const command = pointIndex === 0 ? 'M' : 'L';
+                return `${command} ${xForTime(new Date(point.at).getTime())} ${yForScore(point.score)}`;
+              })
+              .join(' ');
+
+            return (
+              <g key={item.riskId}>
+                <path
+                  d={path}
+                  fill="none"
+                  opacity={isActive ? 1 : 0.22}
+                  stroke={color}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={isActive ? 5 : 3}
+                  style={{cursor: 'pointer'}}
+                  onClick={() => onSelectRisk(item.riskId)}
+                  onMouseEnter={(event) => {
+                    setHoveredRiskId(item.riskId);
+                    showHoverCard(event, item.riskId, item.title);
+                  }}
+                  onMouseLeave={() => {
+                    setHoveredRiskId(null);
+                    setHoverCard(null);
+                  }}
+                  onMouseMove={(event) => showHoverCard(event, item.riskId, item.title)}
+                />
+                {item.points.map((point) => {
+                  const isSelected =
+                    selectedPoint?.riskId === item.riskId && selectedPoint.at === point.at;
+                  const hasRationale = Boolean(point.rationale);
+                  const pointX = xForTime(new Date(point.at).getTime());
+                  const pointY = yForScore(point.score);
+                  return (
+                    <g key={`${item.riskId}-${point.at}`}>
+                      {isSelected ? (
+                        <>
+                          <line
+                            stroke={color}
+                            strokeDasharray="4 4"
+                            strokeOpacity="0.45"
+                            strokeWidth="1.5"
+                            x1={pointX}
+                            x2={pointX}
+                            y1={paddingTop}
+                            y2={paddingTop + plotHeight}
+                          />
+                          <line
+                            stroke={color}
+                            strokeDasharray="4 4"
+                            strokeOpacity="0.45"
+                            strokeWidth="1.5"
+                            x1={paddingLeft}
+                            x2={plotRight}
+                            y1={pointY}
+                            y2={pointY}
+                          />
+                          <circle
+                            cx={pointX}
+                            cy={pointY}
+                            fill={`${color}22`}
+                            r="12"
+                            stroke={color}
+                            strokeWidth="2"
+                          />
+                        </>
+                      ) : null}
+                      <circle
+                        cx={pointX}
+                        cy={pointY}
+                        fill={hasRationale ? color : '#fff'}
+                        opacity={isActive ? 1 : 0.3}
+                        r={isSelected ? 7 : isActive ? 5.5 : 4.5}
+                        stroke={color}
+                        strokeWidth={isSelected ? 4 : hasRationale ? 2.5 : 3}
+                        style={{cursor: 'pointer'}}
+                        onClick={() => onSelectPoint({riskId: item.riskId, at: point.at})}
+                        onMouseEnter={(event) => {
+                          setHoveredRiskId(item.riskId);
+                          showHoverCard(event, item.riskId, item.title);
+                        }}
+                        onMouseLeave={() => {
+                          setHoveredRiskId(null);
+                          setHoverCard(null);
+                        }}
+                        onMouseMove={(event) => showHoverCard(event, item.riskId, item.title)}
+                      />
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+      {!showLegend && hoverCard ? (
+        <div
+          className="pointer-events-none absolute z-10 max-w-[220px] rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-[0_16px_40px_rgba(42,52,57,0.16)] backdrop-blur"
+          style={{
+            left: `${hoverCard.x}px`,
+            top: `${hoverCard.y}px`,
+          }}
+        >
+          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Risk</div>
+          <div className="mt-1 text-sm font-bold text-on-surface">{hoverCard.riskId}</div>
+          <div className="mt-1 text-sm leading-snug text-on-surface-variant">{hoverCard.title}</div>
+        </div>
+      ) : null}
+      <div className="mt-3 text-xs leading-relaxed text-on-surface-variant">
+        Filled points indicate score changes that include rationale. Open points indicate baseline or carry-forward points used to show the full score trend over the selected timeframe.
       </div>
     </div>
   );

@@ -35,4 +35,5 @@ To load the example project, open `app/public/demo-project-snapshot.json` from t
 
 - Use `Publish` to save a new editable JSON board version.
 - Use the `Publish` menu and choose `Export Read-Only HTML` to generate a view-only browser file for reviewers.
+- Use `Trends / Analytics` when you need a burndown chart image for slides; the chart menu supports clipboard copy and PNG download.
 - The JSON board file remains the editable source of truth.

@@ -14,6 +14,7 @@ It starts empty on purpose so users explicitly choose whether to open an existin
 - Risk register with scoring, ownership, linked decisions, mitigation planning, and history
 - Source-owned shared risks with downstream subscriptions, review-required flags, and optional linked local risks
 - Decision register with rationale, linked risks, consequences, and status tracking
+- Trends / Analytics page with risk burndown visualization, focused history timelines, and chart export/copy support
 - Simple board workflow for restricted environments: open a board, edit locally, publish a new JSON version
 - Read-only HTML export for stakeholders who need to review the board without editing it
 - Portable launchers for Mac and Windows
@@ -89,6 +90,8 @@ For most users, the intended flow is:
 5. Use `Publish` to save a new JSON board version
 
 If you need a non-editable shareout for reviewers, use the `Publish` menu in the top bar and choose `Export Read-Only HTML`.
+
+If you need an image for slides or briefings, go to `Trends / Analytics` and use the chart export menu to copy the burndown graphic to the clipboard or download it as a PNG.
 
 ## Board Files And Compatibility
 

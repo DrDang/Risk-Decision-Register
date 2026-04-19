@@ -1,6 +1,6 @@
 {
   "version": "2",
-  "exportedAt": "2026-04-18T18:45:00.000Z",
+  "exportedAt": "2026-04-18T22:30:00.000Z",
   "activeProjectId": "proj-alpha-demo",
   "projects": [
     {
@@ -81,7 +81,7 @@
           "category": "Infrastructure",
           "responseType": "Mitigate",
           "project": "Alpha Core",
-          "lastUpdated": "2 hours ago",
+          "lastUpdated": "2026-04-18T20:15:00.000Z",
           "dueDate": "2026-04-18",
           "mitigation": "Scale multi-region redundancy and tighten dynamic traffic shaping during peak windows.",
           "contingency": "Fail over read-heavy traffic to the alternate region if latency remains above threshold for more than 5 minutes.",
@@ -92,16 +92,24 @@
           "internalOnly": false,
           "history": [
             {
-              "label": "Severity escalated from Medium to High",
-              "meta": "Sarah Jenkins • 2 hours ago"
+              "label": "Likelihood updated (3 Possible → 4 Likely)\nRationale: Regional traffic tests showed demand spikes now exceed the old planning assumption during two consecutive release windows.",
+              "meta": "Local edit",
+              "at": "2026-04-18T20:15:00.000Z"
+            },
+            {
+              "label": "Impact updated (4 Major → 5 Severe)\nRationale: The commercial cutover increased the number of customer-facing workflows affected by a latency event.",
+              "meta": "Local edit",
+              "at": "2026-04-11T15:30:00.000Z"
             },
             {
               "label": "Mitigation plan updated",
-              "meta": "Marcus Thorne • Yesterday"
+              "meta": "Marcus Thorne • Demo seed",
+              "at": "2026-04-09T17:00:00.000Z"
             },
             {
               "label": "Risk created",
-              "meta": "Marcus Thorne • Apr 05, 2026"
+              "meta": "Marcus Thorne • Demo seed",
+              "at": "2026-04-05T13:00:00.000Z"
             }
           ]
         },
@@ -121,7 +129,7 @@
           "category": "Compliance",
           "responseType": "Mitigate",
           "project": "Alpha Core",
-          "lastUpdated": "Yesterday",
+          "lastUpdated": "2026-04-17T16:40:00.000Z",
           "dueDate": "2026-04-25",
           "mitigation": "Map hosted datasets to residency zones and complete counsel review before architecture sign-off.",
           "contingency": "Pause rollout in affected regions and apply temporary data segregation rules.",
@@ -132,12 +140,24 @@
           "internalOnly": true,
           "history": [
             {
-              "label": "Review date moved forward",
-              "meta": "Marcus Thorne • Yesterday"
+              "label": "Impact updated (5 Severe → 4 Major)\nRationale: Counsel confirmed the policy revision narrowed the affected dataset scope, reducing the projected remediation burden.",
+              "meta": "Local edit",
+              "at": "2026-04-17T16:40:00.000Z"
+            },
+            {
+              "label": "Likelihood updated (4 Likely → 3 Possible)\nRationale: The draft regulation slipped one review cycle, so the trigger is still credible but less imminent than originally expected.",
+              "meta": "Local edit",
+              "at": "2026-04-12T10:20:00.000Z"
             },
             {
               "label": "Status changed to Monitoring",
-              "meta": "Sarah Jenkins • Apr 08, 2026"
+              "meta": "Sarah Jenkins • Demo seed",
+              "at": "2026-04-08T14:00:00.000Z"
+            },
+            {
+              "label": "Risk created",
+              "meta": "Sarah Jenkins • Demo seed",
+              "at": "2026-04-03T11:00:00.000Z"
             }
           ]
         },
@@ -157,7 +177,7 @@
           "category": "Platform",
           "responseType": "Mitigate",
           "project": "Core Data Services",
-          "lastUpdated": "12 hours ago",
+          "lastUpdated": "2026-04-18T08:10:00.000Z",
           "dueDate": "2026-04-20",
           "mitigation": "Rebalance jobs and reduce write contention during reconciliation windows.",
           "contingency": "Fallback to delayed morning distribution if replication exceeds threshold.",
@@ -168,12 +188,24 @@
           "internalOnly": true,
           "history": [
             {
-              "label": "Mitigation owner reassigned",
-              "meta": "Marcus Thorne • 12 hours ago"
+              "label": "Likelihood updated (4 Likely → 3 Possible)\nRationale: Overnight job staggering reduced the frequency of replication lag alerts across the last two reporting cycles.",
+              "meta": "Local edit",
+              "at": "2026-04-18T08:10:00.000Z"
+            },
+            {
+              "label": "Impact updated (4 Major → 3 Moderate)\nRationale: Business teams now have a validated morning fallback report, which lowers operational disruption if lag recurs.",
+              "meta": "Local edit",
+              "at": "2026-04-14T09:05:00.000Z"
             },
             {
               "label": "Risk reviewed",
-              "meta": "A. Chen • Apr 07, 2026"
+              "meta": "A. Chen • Demo seed",
+              "at": "2026-04-07T12:00:00.000Z"
+            },
+            {
+              "label": "Risk created",
+              "meta": "A. Chen • Demo seed",
+              "at": "2026-03-29T15:00:00.000Z"
             }
           ]
         },
@@ -193,7 +225,7 @@
           "category": "Third Party",
           "responseType": "Transfer",
           "project": "Identity Platform",
-          "lastUpdated": "3 days ago",
+          "lastUpdated": "2026-04-15T18:20:00.000Z",
           "dueDate": "2026-04-16",
           "mitigation": "Apply compensating monitoring and track vendor patch verification daily.",
           "contingency": "Escalate contractual remediation and isolate exposed workflows.",
@@ -204,12 +236,24 @@
           "internalOnly": false,
           "history": [
             {
-              "label": "Exception request added",
-              "meta": "R. Patel • 3 days ago"
+              "label": "Impact updated (5 Severe → 4 Major)\nRationale: The vulnerable workflow was segmented behind an additional approval gate, lowering the worst-case business impact while the patch is pending.",
+              "meta": "Local edit",
+              "at": "2026-04-15T18:20:00.000Z"
+            },
+            {
+              "label": "Likelihood updated (5 Almost Certain → 4 Likely)\nRationale: The vendor provided a verified interim control and a firm patch date, which reduced but did not eliminate the chance of exposure.",
+              "meta": "Local edit",
+              "at": "2026-04-10T13:45:00.000Z"
             },
             {
               "label": "Severity confirmed High",
-              "meta": "Security Council • Apr 03, 2026"
+              "meta": "Security Council • Demo seed",
+              "at": "2026-04-03T16:00:00.000Z"
+            },
+            {
+              "label": "Risk created",
+              "meta": "R. Patel • Demo seed",
+              "at": "2026-03-28T10:00:00.000Z"
             }
           ]
         }
