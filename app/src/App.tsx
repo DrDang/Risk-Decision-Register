@@ -2827,6 +2827,8 @@ export default function App() {
   const [sharedRiskDrawerOpen, setSharedRiskDrawerOpen] = useState(false);
   const [createRiskOpen, setCreateRiskOpen] = useState(false);
   const [createDecisionOpen, setCreateDecisionOpen] = useState(false);
+  const [readOnlyExportOpen, setReadOnlyExportOpen] = useState(false);
+  const [readOnlyExportProjectIds, setReadOnlyExportProjectIds] = useState<string[]>([]);
   const [editorName, setEditorName] = useState<string>(() => loadEditorName());
   const [registrySession, setRegistrySession] = useState<RegistrySession>(() => ({
     sourceLabel: 'Local browser draft',
@@ -3994,25 +3996,50 @@ export default function App() {
     return 'Recovery draft exported.';
   }
 
-  function handleExportReadOnlyBoard() {
+  function handleRequestReadOnlyBoardExport() {
     if (!registrySession.baseDocumentId) {
       throw new Error('Open or start a board first before exporting a read-only view.');
     }
 
+    setReadOnlyExportProjectIds(projects.map((project) => project.id));
+    setReadOnlyExportOpen(true);
+  }
+
+  function handleExportReadOnlyBoard(selectedProjectIds: string[]) {
+    if (!registrySession.baseDocumentId) {
+      throw new Error('Open or start a board first before exporting a read-only view.');
+    }
+
+    const filteredProjects = projects.filter((project) => selectedProjectIds.includes(project.id));
+    if (!filteredProjects.length) {
+      throw new Error('Choose at least one project to include in the read-only export.');
+    }
+
     const exportedAt = new Date().toISOString();
-    const snapshot = buildAppSnapshot(projects, activeProjectId, sharedRisks, sharedRiskSubscriptions, sharedDecisions, {
-      documentId: registrySession.baseDocumentId,
-      name: registrySession.registryName,
-      revision: registrySession.baseRevision ?? 1,
-      parentRevision: registrySession.baseRevision != null ? Math.max(registrySession.baseRevision - 1, 0) || null : null,
-      parentContentHash: registrySession.baseContentHash,
-      lastModifiedAt: registrySession.loadedAt ?? exportedAt,
-      lastModifiedBy: editorName.trim() || registrySession.sourceLabel || 'Governance Register',
-    });
+    const exportActiveProjectId = filteredProjects.some((project) => project.id === activeProjectId)
+      ? activeProjectId
+      : filteredProjects[0].id;
+    const snapshot = buildAppSnapshot(
+      filteredProjects,
+      exportActiveProjectId,
+      sharedRisks,
+      sharedRiskSubscriptions,
+      sharedDecisions,
+      {
+        documentId: registrySession.baseDocumentId,
+        name: registrySession.registryName,
+        revision: registrySession.baseRevision ?? 1,
+        parentRevision: registrySession.baseRevision != null ? Math.max(registrySession.baseRevision - 1, 0) || null : null,
+        parentContentHash: registrySession.baseContentHash,
+        lastModifiedAt: registrySession.loadedAt ?? exportedAt,
+        lastModifiedBy: editorName.trim() || registrySession.sourceLabel || 'Governance Register',
+      },
+    );
     const html = buildReadOnlyBoardHtml(snapshot);
     const timestampToken = getLocalFileTimestamp(new Date(exportedAt));
     const fileName = `${sanitizeFileStem(registrySession.registryName)}_${timestampToken}_read-only.html`;
     downloadTextFile(html, fileName, 'text/html');
+    setReadOnlyExportOpen(false);
     return `Exported a read-only board view as ${fileName} using your local time.`;
   }
 
@@ -4104,7 +4131,7 @@ export default function App() {
               hasUnsavedChanges={hasUnsavedChanges}
               onExportReadOnlyBoard={() => {
                 try {
-                  handleExportReadOnlyBoard();
+                  handleRequestReadOnlyBoardExport();
                 } catch (error) {
                   window.alert(error instanceof Error ? error.message : 'Read-only export failed.');
                 }
@@ -4185,7 +4212,7 @@ export default function App() {
                 onOpenMasterSnapshot={handleOpenMasterSnapshot}
                 onStartNewBoard={handleStartNewBoard}
                 onPublishBoard={handlePublishBoard}
-                onExportReadOnlyBoard={handleExportReadOnlyBoard}
+                onExportReadOnlyBoard={handleRequestReadOnlyBoardExport}
                 onRestoreRecoveryDraft={handleRestoreRecoveryDraft}
                 onDiscardRecoveryDraft={handleDiscardRecoveryDraft}
                 onExportRecoveryDraft={handleExportRecoveryDraft}
@@ -4261,6 +4288,22 @@ export default function App() {
               onCreate={handleCreateDecision}
             />
           ) : null}
+          <ReadOnlyExportModal
+            activeProjectId={activeProjectId}
+            onClose={() => setReadOnlyExportOpen(false)}
+            onConfirm={() => {
+              try {
+                const message = handleExportReadOnlyBoard(readOnlyExportProjectIds);
+                window.alert(message);
+              } catch (error) {
+                window.alert(error instanceof Error ? error.message : 'Read-only export failed.');
+              }
+            }}
+            onSelectionChange={setReadOnlyExportProjectIds}
+            open={readOnlyExportOpen}
+            projects={projects}
+            selectedProjectIds={readOnlyExportProjectIds}
+          />
         </div>
       </div>
     </div>
@@ -6055,6 +6098,176 @@ function SharedLibraryPage({
   );
 }
 
+function ReadOnlyExportModal({
+  open,
+  projects,
+  selectedProjectIds,
+  activeProjectId,
+  onSelectionChange,
+  onConfirm,
+  onClose,
+}: {
+  open: boolean;
+  projects: Project[];
+  selectedProjectIds: string[];
+  activeProjectId: string;
+  onSelectionChange: (projectIds: string[]) => void;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const backdropPressStarted = useRef(false);
+  const selectedProjectIdSet = new Set(selectedProjectIds);
+  const hasSelection = selectedProjectIds.length > 0;
+
+  if (!open) {
+    return null;
+  }
+
+  function handleToggleProject(projectId: string) {
+    onSelectionChange(
+      selectedProjectIdSet.has(projectId)
+        ? selectedProjectIds.filter((currentProjectId) => currentProjectId !== projectId)
+        : [...selectedProjectIds, projectId],
+    );
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] overflow-y-auto bg-slate-950/30"
+      onClick={(event) => {
+        if (backdropPressStarted.current && event.target === event.currentTarget) {
+          onClose();
+        }
+        backdropPressStarted.current = false;
+      }}
+      onMouseDown={(event) => {
+        backdropPressStarted.current = event.target === event.currentTarget;
+      }}
+      onMouseUp={() => {
+        window.setTimeout(() => {
+          backdropPressStarted.current = false;
+        }, 0);
+      }}
+    >
+      <div className="flex min-h-full items-center justify-center px-6 py-6">
+        <div
+          className="flex w-full max-w-2xl flex-col rounded-[2rem] bg-white shadow-[0_28px_80px_rgba(42,52,57,0.18)]"
+          onClick={(event) => event.stopPropagation()}
+          onMouseDown={() => {
+            backdropPressStarted.current = false;
+          }}
+        >
+          <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">Read-Only Export</div>
+              <h2 className="mt-1 font-headline text-2xl font-extrabold text-on-surface">Choose projects to publish</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-on-surface-variant">
+                Include only the projects you want teammates to see in this HTML shareout. The source board stays unchanged.
+              </p>
+            </div>
+            <button
+              className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+              onClick={onClose}
+              type="button"
+            >
+              <span className="material-symbols-outlined">close</span>
+            </button>
+          </div>
+
+          <div className="space-y-5 px-6 py-6">
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-on-surface transition hover:bg-slate-200"
+                onClick={() => onSelectionChange(projects.map((project) => project.id))}
+                type="button"
+              >
+                Select all
+              </button>
+              <button
+                className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-on-surface transition hover:bg-slate-200"
+                onClick={() => onSelectionChange([activeProjectId])}
+                type="button"
+              >
+                Current project only
+              </button>
+              <button
+                className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-on-surface transition hover:bg-slate-200"
+                onClick={() => onSelectionChange([])}
+                type="button"
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {projects.map((project) => {
+                const selected = selectedProjectIdSet.has(project.id);
+                const riskCount = project.risks.length;
+                const decisionCount = project.decisions.length;
+
+                return (
+                  <label
+                    key={project.id}
+                    className={`flex cursor-pointer items-start justify-between gap-4 rounded-2xl border px-4 py-3 transition ${
+                      selected ? 'border-primary/30 bg-primary/5' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-on-surface">{project.name}</span>
+                        {project.id === activeProjectId ? (
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 ring-1 ring-slate-200">
+                            Current
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 text-sm text-on-surface-variant">
+                        {riskCount} risk{riskCount === 1 ? '' : 's'} and {decisionCount} decision{decisionCount === 1 ? '' : 's'}
+                      </div>
+                      {project.description ? (
+                        <div className="mt-1 text-sm text-on-surface-variant">{project.description}</div>
+                      ) : null}
+                    </div>
+                    <input
+                      checked={selected}
+                      className="mt-1 h-4 w-4 shrink-0 accent-primary"
+                      onChange={() => handleToggleProject(project.id)}
+                      type="checkbox"
+                    />
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 border-t border-slate-200 px-6 py-5">
+            <div className="text-sm text-on-surface-variant">
+              {selectedProjectIds.length} project{selectedProjectIds.length === 1 ? '' : 's'} selected
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-on-surface transition hover:bg-slate-200"
+                onClick={onClose}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="rounded-xl bg-gradient-to-br from-primary to-primary-dim px-4 py-2.5 text-sm font-bold text-on-primary shadow-lg shadow-primary/20 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!hasSelection}
+                onClick={onConfirm}
+                type="button"
+              >
+                Export HTML
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SnapshotPage({
   activeProjectName,
   projectCount,
@@ -6074,7 +6287,7 @@ function SnapshotPage({
   onOpenMasterSnapshot: (source: string, fileName: string) => string;
   onStartNewBoard: () => void;
   onPublishBoard: () => string;
-  onExportReadOnlyBoard: () => string;
+  onExportReadOnlyBoard: () => void;
   onRestoreRecoveryDraft: () => string;
   onDiscardRecoveryDraft: () => string;
   onExportRecoveryDraft: () => string;

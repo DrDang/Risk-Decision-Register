@@ -1,12 +1,12 @@
 {
   "version": "2",
-  "exportedAt": "2026-04-18T22:30:00.000Z",
+  "exportedAt": "2026-04-20T17:30:00.000Z",
   "activeProjectId": "proj-alpha-demo",
   "projects": [
     {
       "id": "proj-alpha-demo",
       "name": "Project Alpha Demo",
-      "description": "Example governance and delivery risk tracking project for demos and training.",
+      "description": "Core platform modernization program used as the primary demo workspace.",
       "createdAt": "2026-01-01",
       "scoringModel": {
         "likelihood": [
@@ -66,322 +66,993 @@
       },
       "risks": [
         {
-          "id": "RSK-0024",
-          "title": "Cloud Latency Spike",
-          "statement": "IF regional traffic surges exceed current throttling thresholds, THEN platform response times degrade for priority workflows, RESULTING IN missed service commitments and customer churn risk.",
-          "trigger": "regional traffic surges exceed current throttling thresholds",
-          "consequence": "platform response times degrade for priority workflows",
-          "resultingIn": "missed service commitments and customer churn risk",
+          "id": "RSK-0101",
+          "originKey": "alpha-risk-zero-trust-cutover",
+          "sharedRiskId": "SH-RSK-0001",
+          "sharedRiskRole": "source",
+          "sharedParentVersionSeen": 2,
+          "sharedReviewStatus": "current",
+          "sharedOverrideRationale": "",
+          "title": "Zero-Trust Rollout Causes API Breakage",
+          "statement": "IF downstream services are not updated for per-session verification before cutover, THEN inter-service authentication failures could spike during rollout, RESULTING IN customer-facing outages and emergency rollback pressure.",
+          "trigger": "downstream services are not updated for per-session verification before cutover",
+          "consequence": "inter-service authentication failures could spike during rollout",
+          "resultingIn": "customer-facing outages and emergency rollback pressure",
           "status": "Active",
           "severity": "High",
           "owner": "Sarah Jenkins",
           "likelihood": 4,
           "impact": 5,
           "residualRating": "High (20)",
-          "category": "Infrastructure",
           "responseType": "Mitigate",
           "project": "Alpha Core",
-          "lastUpdated": "2026-04-18T20:15:00.000Z",
-          "dueDate": "2026-04-18",
-          "mitigation": "Scale multi-region redundancy and tighten dynamic traffic shaping during peak windows.",
-          "contingency": "Fail over read-heavy traffic to the alternate region if latency remains above threshold for more than 5 minutes.",
-          "linkedDecision": "DEC-202",
-          "attachments": 3,
-          "comments": 4,
-          "createdBy": "Marcus Thorne",
+          "lastUpdated": "2026-04-20T15:20:00.000Z",
+          "dueDate": "2026-04-29",
+          "mitigation": "Complete service compatibility tests, stage token validation fallbacks, and require go-live evidence from each dependent team.",
+          "contingency": "Rollback traffic to the legacy token path and freeze rollout if authentication errors exceed the threshold for ten minutes.",
+          "linkedDecision": "DEC-0301",
+          "attachments": 4,
+          "comments": 5,
+          "createdBy": "Demo seed",
           "internalOnly": false,
           "history": [
             {
-              "label": "Likelihood updated (3 Possible → 4 Likely)\nRationale: Regional traffic tests showed demand spikes now exceed the old planning assumption during two consecutive release windows.",
-              "meta": "Local edit",
-              "at": "2026-04-18T20:15:00.000Z"
+              "label": "Shared risk published",
+              "meta": "Project Alpha Demo",
+              "at": "2026-04-17T13:00:00.000Z"
             },
             {
-              "label": "Impact updated (4 Major → 5 Severe)\nRationale: The commercial cutover increased the number of customer-facing workflows affected by a latency event.",
-              "meta": "Local edit",
-              "at": "2026-04-11T15:30:00.000Z"
-            },
-            {
-              "label": "Mitigation plan updated",
-              "meta": "Marcus Thorne • Demo seed",
-              "at": "2026-04-09T17:00:00.000Z"
-            },
-            {
-              "label": "Risk created",
-              "meta": "Marcus Thorne • Demo seed",
-              "at": "2026-04-05T13:00:00.000Z"
+              "label": "Likelihood updated (3 Possible -> 4 Likely)",
+              "meta": "Sarah Jenkins",
+              "at": "2026-04-20T15:20:00.000Z"
             }
           ]
         },
         {
-          "id": "RSK-0023",
-          "title": "Data Residency Compliance Shift",
-          "statement": "IF EU residency obligations tighten after the policy update, THEN current data handling controls may become non-compliant, RESULTING IN remediation cost and release delays.",
-          "trigger": "EU residency obligations tighten after the policy update",
-          "consequence": "current data handling controls may become non-compliant",
-          "resultingIn": "remediation cost and release delays",
+          "id": "RSK-0102",
+          "originKey": "alpha-risk-data-residency",
+          "title": "Data Residency Review Changes Deployment Dates",
+          "statement": "IF counsel requests additional control evidence for the regional hosting design, THEN environment approvals may slip, RESULTING IN delayed release readiness and increased coordination overhead.",
+          "trigger": "counsel requests additional control evidence for the regional hosting design",
+          "consequence": "environment approvals may slip",
+          "resultingIn": "delayed release readiness and increased coordination overhead",
           "status": "Monitoring",
           "severity": "Medium",
           "owner": "Marcus Thorne",
           "likelihood": 3,
           "impact": 4,
           "residualRating": "Medium (12)",
-          "category": "Compliance",
           "responseType": "Mitigate",
           "project": "Alpha Core",
-          "lastUpdated": "2026-04-17T16:40:00.000Z",
-          "dueDate": "2026-04-25",
-          "mitigation": "Map hosted datasets to residency zones and complete counsel review before architecture sign-off.",
-          "contingency": "Pause rollout in affected regions and apply temporary data segregation rules.",
-          "linkedDecision": "DEC-204",
+          "lastUpdated": "2026-04-18T11:10:00.000Z",
+          "dueDate": "2026-05-03",
+          "mitigation": "Pre-stage residency evidence, map datasets by region, and review control narratives with counsel ahead of sign-off.",
+          "contingency": "Hold the regulated release train and split unaffected capabilities into a separate deployment.",
+          "linkedDecision": "DEC-0302",
           "attachments": 2,
           "comments": 2,
-          "createdBy": "Sarah Jenkins",
+          "createdBy": "Demo seed",
           "internalOnly": true,
           "history": [
             {
-              "label": "Impact updated (5 Severe → 4 Major)\nRationale: Counsel confirmed the policy revision narrowed the affected dataset scope, reducing the projected remediation burden.",
-              "meta": "Local edit",
-              "at": "2026-04-17T16:40:00.000Z"
-            },
-            {
-              "label": "Likelihood updated (4 Likely → 3 Possible)\nRationale: The draft regulation slipped one review cycle, so the trigger is still credible but less imminent than originally expected.",
-              "meta": "Local edit",
-              "at": "2026-04-12T10:20:00.000Z"
-            },
-            {
-              "label": "Status changed to Monitoring",
-              "meta": "Sarah Jenkins • Demo seed",
-              "at": "2026-04-08T14:00:00.000Z"
-            },
-            {
               "label": "Risk created",
-              "meta": "Sarah Jenkins • Demo seed",
-              "at": "2026-04-03T11:00:00.000Z"
+              "meta": "Demo seed",
+              "at": "2026-04-08T10:30:00.000Z"
             }
           ]
         },
         {
-          "id": "RSK-0021",
-          "title": "Database Replication Lag",
-          "statement": "IF replication lag increases during overnight sync windows, THEN downstream reporting may use stale records, RESULTING IN operational rework and decision delay.",
-          "trigger": "replication lag increases during overnight sync windows",
-          "consequence": "downstream reporting may use stale records",
-          "resultingIn": "operational rework and decision delay",
-          "status": "Monitoring",
+          "id": "RSK-0103",
+          "originKey": "alpha-risk-release-window",
+          "title": "Release Window Overlap With Customer Launch",
+          "statement": "IF the platform cutover overlaps the customer launch campaign, THEN operational teams may not absorb issues fast enough, RESULTING IN noisy escalation and missed onboarding targets.",
+          "trigger": "the platform cutover overlaps the customer launch campaign",
+          "consequence": "operational teams may not absorb issues fast enough",
+          "resultingIn": "noisy escalation and missed onboarding targets",
+          "status": "Pending",
           "severity": "Medium",
-          "owner": "A. Chen",
+          "owner": "Priya Nair",
           "likelihood": 3,
           "impact": 3,
           "residualRating": "Medium (9)",
-          "category": "Platform",
           "responseType": "Mitigate",
-          "project": "Core Data Services",
-          "lastUpdated": "2026-04-18T08:10:00.000Z",
-          "dueDate": "2026-04-20",
-          "mitigation": "Rebalance jobs and reduce write contention during reconciliation windows.",
-          "contingency": "Fallback to delayed morning distribution if replication exceeds threshold.",
+          "project": "Alpha Core",
+          "lastUpdated": "2026-04-16T09:00:00.000Z",
+          "dueDate": "2026-05-07",
+          "mitigation": "Separate the launch wave from the platform cutover and staff a focused hypercare period.",
+          "contingency": "Push the external launch by one week if release readiness remains amber.",
           "linkedDecision": "None",
           "attachments": 1,
           "comments": 1,
-          "createdBy": "A. Chen",
-          "internalOnly": true,
-          "history": [
-            {
-              "label": "Likelihood updated (4 Likely → 3 Possible)\nRationale: Overnight job staggering reduced the frequency of replication lag alerts across the last two reporting cycles.",
-              "meta": "Local edit",
-              "at": "2026-04-18T08:10:00.000Z"
-            },
-            {
-              "label": "Impact updated (4 Major → 3 Moderate)\nRationale: Business teams now have a validated morning fallback report, which lowers operational disruption if lag recurs.",
-              "meta": "Local edit",
-              "at": "2026-04-14T09:05:00.000Z"
-            },
-            {
-              "label": "Risk reviewed",
-              "meta": "A. Chen • Demo seed",
-              "at": "2026-04-07T12:00:00.000Z"
-            },
-            {
-              "label": "Risk created",
-              "meta": "A. Chen • Demo seed",
-              "at": "2026-03-29T15:00:00.000Z"
-            }
-          ]
-        },
-        {
-          "id": "RSK-0018",
-          "title": "Vendor Patch Delay",
-          "statement": "IF the authentication vendor delays the scheduled patch, THEN unresolved vulnerabilities remain in production longer, RESULTING IN elevated exposure and exception requests.",
-          "trigger": "the authentication vendor delays the scheduled patch",
-          "consequence": "unresolved vulnerabilities remain in production longer",
-          "resultingIn": "elevated exposure and exception requests",
-          "status": "Active",
-          "severity": "High",
-          "owner": "R. Patel",
-          "likelihood": 4,
-          "impact": 4,
-          "residualRating": "High (16)",
-          "category": "Third Party",
-          "responseType": "Transfer",
-          "project": "Identity Platform",
-          "lastUpdated": "2026-04-15T18:20:00.000Z",
-          "dueDate": "2026-04-16",
-          "mitigation": "Apply compensating monitoring and track vendor patch verification daily.",
-          "contingency": "Escalate contractual remediation and isolate exposed workflows.",
-          "linkedDecision": "DEC-198",
-          "attachments": 4,
-          "comments": 3,
-          "createdBy": "R. Patel",
+          "createdBy": "Demo seed",
           "internalOnly": false,
           "history": [
             {
-              "label": "Impact updated (5 Severe → 4 Major)\nRationale: The vulnerable workflow was segmented behind an additional approval gate, lowering the worst-case business impact while the patch is pending.",
-              "meta": "Local edit",
-              "at": "2026-04-15T18:20:00.000Z"
-            },
-            {
-              "label": "Likelihood updated (5 Almost Certain → 4 Likely)\nRationale: The vendor provided a verified interim control and a firm patch date, which reduced but did not eliminate the chance of exposure.",
-              "meta": "Local edit",
-              "at": "2026-04-10T13:45:00.000Z"
-            },
-            {
-              "label": "Severity confirmed High",
-              "meta": "Security Council • Demo seed",
-              "at": "2026-04-03T16:00:00.000Z"
-            },
-            {
               "label": "Risk created",
-              "meta": "R. Patel • Demo seed",
-              "at": "2026-03-28T10:00:00.000Z"
+              "meta": "Demo seed",
+              "at": "2026-04-16T09:00:00.000Z"
             }
           ]
         }
       ],
       "decisions": [
         {
-          "id": "DEC-202",
-          "title": "Zero-Trust Protocol V2",
+          "id": "DEC-0301",
+          "sharedDecisionId": "SH-DEC-0001",
+          "title": "Adopt Zero-Trust Protocol V2",
           "summary": "Require per-session verification across internal services and retire long-lived tokens.",
           "status": "Approved",
           "deciders": "Security Council",
-          "date": "Apr 09, 2026",
+          "date": "Apr 17, 2026",
           "linkedRisks": [
-            "RSK-0024",
-            "RSK-0018"
+            "RSK-0101"
           ],
-          "context": "Long-lived session tokens have been identified as a lateral movement risk in two active risk records. Current authentication architecture relies on tokens valid for up to 24 hours, which extends the blast radius of any credential compromise. An upcoming SOC 2 audit requires demonstrable controls around session management.",
+          "context": "Identity architecture review found inconsistent session handling across multiple internal APIs. The program needs one standard control model before the phased rollout reaches customer-facing services.",
           "decisionDrivers": [
             "Reduce lateral movement risk from compromised credentials",
-            "Align with SOC 2 Type II session control requirements",
-            "Limit blast radius of any single identity compromise"
+            "Create one identity standard for platform and product teams",
+            "Support the shared rollout plan used by multiple projects"
           ],
           "consideredOptions": [
-            "Adopt per-session verification (Zero-Trust V2) across all internal services",
-            "Keep current token duration with added anomaly detection",
-            "Pilot zero-trust only on privileged services, defer broad rollout"
+            "Adopt per-session verification across all internal services",
+            "Add monitoring only and keep long-lived tokens",
+            "Pilot zero-trust on privileged services only"
           ],
-          "outcome": "We adopted per-session verification across all internal services and retired long-lived tokens. The pilot-only option was rejected because partial coverage would leave high-value internal APIs unprotected during the audit window. Anomaly detection alone was judged insufficient as a primary control.",
+          "outcome": "The council approved per-session verification across all internal services and retired long-lived tokens. Partial rollout was rejected because it would leave too many dependencies on the older model during cutover.",
           "goodConsequences": [
-            "Significantly reduces lateral movement risk if credentials are compromised",
-            "Satisfies SOC 2 session management controls ahead of audit",
-            "Establishes a consistent identity posture across all internal service boundaries"
+            "Creates a consistent control pattern across teams",
+            "Reduces credential replay risk",
+            "Can be reused by subscriber projects with minimal rework"
           ],
           "badConsequences": [
-            "Increases authentication overhead per request — latency impact must be monitored",
-            "Requires coordinated rollout across multiple platform teams"
+            "Requires broad service compatibility testing",
+            "Raises short-term cutover coordination effort"
           ],
-          "moreInfo": "Implementation tracked under RSK-0024 and RSK-0018. Architecture review completed Apr 07, 2026. Rollout plan owned by Platform team.",
+          "moreInfo": "This is the source shared decision for SH-DEC-0001.",
           "approvalChain": [
-            "Security Architecture sign-off",
-            "Platform review complete",
-            "Council vote recorded"
+            "Architecture sign-off complete",
+            "Security Council vote recorded"
           ]
         },
         {
-          "id": "DEC-204",
-          "title": "Regional Data Residency Migration",
-          "summary": "Move regulated datasets into region-specific storage and processing boundaries.",
+          "id": "DEC-0302",
+          "title": "Stage Regional Data Residency Migration",
+          "summary": "Move regulated datasets into region-specific hosting boundaries ahead of policy deadlines.",
           "status": "Implemented",
           "deciders": "Steering Committee",
-          "date": "Apr 02, 2026",
+          "date": "Apr 10, 2026",
           "linkedRisks": [
-            "RSK-0023"
+            "RSK-0102"
           ],
-          "context": "Pending EU policy changes may tighten data residency obligations for regulated datasets currently stored in a multi-region bucket. Legal counsel flagged that the current architecture creates ambiguity about which jurisdiction governs specific datasets, creating remediation risk if the policy update is enacted before the next release.",
+          "context": "Policy guidance is still evolving, but legal review recommended region-specific storage as the least disruptive compliant target architecture.",
           "decisionDrivers": [
-            "Eliminate legal ambiguity over dataset jurisdiction before policy effective date",
-            "Avoid release delays due to mid-cycle compliance remediation",
-            "Reduce per-exception handling burden on legal and operations teams"
+            "Reduce compliance ambiguity",
+            "Avoid mid-cycle remediation work",
+            "Preserve a clear audit trail"
           ],
           "consideredOptions": [
-            "Migrate regulated datasets to region-specific storage boundaries",
-            "Apply manual data handling exceptions per dataset on request",
-            "Implement a temporary legal hold process and defer migration"
+            "Migrate regulated datasets by region",
+            "Handle exceptions manually",
+            "Delay migration until policy is final"
           ],
-          "outcome": "We decided to migrate all regulated datasets into region-specific storage and processing boundaries before the policy effective date. Manual exceptions were rejected due to operational overhead and error risk at scale. The legal hold process was judged as a short-term workaround that would not survive a compliance audit.",
+          "outcome": "The team chose to migrate regulated datasets by region before the next regulated release window.",
           "goodConsequences": [
-            "Removes compliance ambiguity and simplifies legal review for future releases",
-            "Reduces operational burden from per-dataset exception handling"
+            "Simplifies future counsel review",
+            "Reduces exception handling"
           ],
           "badConsequences": [
-            "Requires engineering effort to re-architect data pipelines per region",
-            "Short-term release velocity impact while migration is in progress"
+            "Consumes delivery capacity during the migration window"
           ],
-          "moreInfo": "Migration verified complete Apr 02, 2026. Linked to RSK-0023 for ongoing monitoring.",
+          "moreInfo": "Migration plan validated during release planning.",
           "approvalChain": [
             "Legal review complete",
-            "Operations approval complete",
-            "Implementation verified"
+            "Steering approval complete"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "proj-beta-demo",
+      "name": "Project Beta Demo",
+      "description": "Client portal and onboarding program that consumes shared platform controls from Alpha.",
+      "createdAt": "2026-01-12",
+      "scoringModel": {
+        "likelihood": [
+          {
+            "value": 1,
+            "label": "Rare",
+            "description": "Unlikely to occur except in exceptional circumstances."
+          },
+          {
+            "value": 2,
+            "label": "Unlikely",
+            "description": "Could occur, but not expected during normal execution."
+          },
+          {
+            "value": 3,
+            "label": "Possible",
+            "description": "Reasonably plausible and should be considered in planning."
+          },
+          {
+            "value": 4,
+            "label": "Likely",
+            "description": "Expected to occur in many realistic scenarios."
+          },
+          {
+            "value": 5,
+            "label": "Almost Certain",
+            "description": "Expected to occur frequently or is already emerging."
+          }
+        ],
+        "impact": [
+          {
+            "value": 1,
+            "label": "Minimal",
+            "description": "Minor effect with little operational disruption."
+          },
+          {
+            "value": 2,
+            "label": "Minor",
+            "description": "Limited impact requiring small local adjustments."
+          },
+          {
+            "value": 3,
+            "label": "Moderate",
+            "description": "Noticeable impact to delivery, cost, or performance."
+          },
+          {
+            "value": 4,
+            "label": "Major",
+            "description": "Serious disruption requiring management attention and recovery effort."
+          },
+          {
+            "value": 5,
+            "label": "Severe",
+            "description": "Critical impact to mission, compliance, or core service continuity."
+          }
+        ]
+      },
+      "risks": [
+        {
+          "id": "RSK-0207",
+          "originKey": "beta-risk-zero-trust-portal-link",
+          "sharedRiskId": "SH-RSK-0001",
+          "sharedRiskRole": "linked",
+          "sharedParentVersionSeen": 2,
+          "sharedReviewStatus": "reviewed_no_change",
+          "sharedOverrideRationale": "Portal-specific mitigation adds customer communications and feature flag staging while keeping the upstream risk statement intact.",
+          "title": "Zero-Trust Rollout Causes Portal Sign-In Failures",
+          "statement": "IF downstream services are not updated for per-session verification before cutover, THEN portal sign-in and session refresh failures could spike during rollout, RESULTING IN onboarding disruption and customer support load.",
+          "trigger": "downstream services are not updated for per-session verification before cutover",
+          "consequence": "portal sign-in and session refresh failures could spike during rollout",
+          "resultingIn": "onboarding disruption and customer support load",
+          "status": "Active",
+          "severity": "High",
+          "owner": "Lena Ortiz",
+          "likelihood": 4,
+          "impact": 4,
+          "residualRating": "High (16)",
+          "responseType": "Mitigate",
+          "project": "Beta Client Portal",
+          "lastUpdated": "2026-04-20T14:10:00.000Z",
+          "dueDate": "2026-04-28",
+          "mitigation": "Run portal canary releases behind feature flags, pre-stage support messaging, and require synthetic sign-in checks before each rollout wave.",
+          "contingency": "Disable the new session path for the portal and route traffic through the legacy login stack if error rates rise.",
+          "linkedDecision": "DEC-0401",
+          "attachments": 3,
+          "comments": 4,
+          "createdBy": "Demo seed",
+          "internalOnly": false,
+          "history": [
+            {
+              "label": "Linked local risk created from shared risk SH-RSK-0001",
+              "meta": "Project Beta Demo",
+              "at": "2026-04-18T12:20:00.000Z"
+            },
+            {
+              "label": "Shared risk review acknowledged",
+              "meta": "Lena Ortiz",
+              "at": "2026-04-20T14:10:00.000Z"
+            }
           ]
         },
         {
-          "id": "DEC-198",
-          "title": "Authentication Vendor Patch Exception",
-          "summary": "Accept short-term compensating controls while vendor remediation is in progress.",
-          "status": "Deferred",
-          "deciders": "Risk Committee",
-          "date": "Mar 30, 2026",
+          "id": "RSK-0208",
+          "originKey": "beta-risk-content-translation",
+          "title": "Localized Content Misses Launch Window",
+          "statement": "IF translation approvals arrive after the portal release candidate is cut, THEN customer journeys may launch with incomplete localized content, RESULTING IN rework and delayed regional adoption.",
+          "trigger": "translation approvals arrive after the portal release candidate is cut",
+          "consequence": "customer journeys may launch with incomplete localized content",
+          "resultingIn": "rework and delayed regional adoption",
+          "status": "Monitoring",
+          "severity": "Medium",
+          "owner": "Helen Brooks",
+          "likelihood": 3,
+          "impact": 3,
+          "residualRating": "Medium (9)",
+          "responseType": "Mitigate",
+          "project": "Beta Client Portal",
+          "lastUpdated": "2026-04-15T16:40:00.000Z",
+          "dueDate": "2026-05-04",
+          "mitigation": "Prioritize legal and marketing review for the top languages and hold low-volume locales for the follow-on release if needed.",
+          "contingency": "Launch with English fallback only in low-volume regions after stakeholder approval.",
+          "linkedDecision": "None",
+          "attachments": 1,
+          "comments": 2,
+          "createdBy": "Demo seed",
+          "internalOnly": false,
+          "history": [
+            {
+              "label": "Risk created",
+              "meta": "Demo seed",
+              "at": "2026-04-09T15:10:00.000Z"
+            }
+          ]
+        },
+        {
+          "id": "RSK-0209",
+          "originKey": "beta-risk-call-center-capacity",
+          "title": "Call Center Capacity Lags Portal Launch",
+          "statement": "IF support training trails the portal launch, THEN the service desk may not absorb early customer confusion, RESULTING IN longer queues and lower launch confidence.",
+          "trigger": "support training trails the portal launch",
+          "consequence": "the service desk may not absorb early customer confusion",
+          "resultingIn": "longer queues and lower launch confidence",
+          "status": "Pending",
+          "severity": "Medium",
+          "owner": "Jordan Ellis",
+          "likelihood": 2,
+          "impact": 4,
+          "residualRating": "Medium (8)",
+          "responseType": "Mitigate",
+          "project": "Beta Client Portal",
+          "lastUpdated": "2026-04-14T18:00:00.000Z",
+          "dueDate": "2026-05-06",
+          "mitigation": "Schedule live support simulations and align launch staffing with the cutover calendar.",
+          "contingency": "Throttle the rollout cohort size if service levels fall below target.",
+          "linkedDecision": "DEC-0401",
+          "attachments": 1,
+          "comments": 1,
+          "createdBy": "Demo seed",
+          "internalOnly": false,
+          "history": [
+            {
+              "label": "Risk created",
+              "meta": "Demo seed",
+              "at": "2026-04-14T18:00:00.000Z"
+            }
+          ]
+        }
+      ],
+      "decisions": [
+        {
+          "id": "DEC-0401",
+          "sharedDecisionId": "SH-DEC-0001",
+          "title": "Adopt Zero-Trust Protocol V2 For Portal Services",
+          "summary": "Use the Alpha-shared identity decision for portal authentication and rollout controls.",
+          "status": "Approved",
+          "deciders": "Beta Delivery Board",
+          "date": "Apr 18, 2026",
           "linkedRisks": [
-            "RSK-0018"
+            "RSK-0207",
+            "RSK-0209"
           ],
-          "context": "The authentication vendor has delayed a critical patch by at least 3 weeks. Unresolved vulnerabilities remain in the production identity platform. Replacing the vendor or disabling the service would cause significant disruption. The committee must decide whether to accept the delay with compensating controls or escalate to a wider platform change.",
+          "context": "The client portal depends on Alpha platform identity services, so the subscriber project adopted the same shared decision and layered project-specific rollout controls on top.",
           "decisionDrivers": [
-            "Minimise service disruption during vendor remediation window",
-            "Maintain acceptable risk exposure through compensating monitoring",
-            "Preserve optionality for a vendor replacement if the delay extends"
+            "Stay aligned with the upstream platform identity control",
+            "Reduce local design churn",
+            "Create one communications and support plan for the rollout"
           ],
           "consideredOptions": [
-            "Accept the delay with enhanced compensating monitoring and daily patch tracking",
-            "Initiate immediate vendor replacement",
-            "Temporarily disable the exposed authentication service"
+            "Adopt the shared decision from Alpha",
+            "Delay portal participation until the second rollout wave",
+            "Keep the legacy session model locally"
           ],
-          "outcome": "The committee deferred a wider platform change and accepted the delay with compensating controls. Immediate vendor replacement was rejected due to the complexity and lead time involved. Disabling the service was not feasible without an alternative in place.",
+          "outcome": "Beta adopted the shared Alpha decision and added local portal rollout safeguards. Deferring the portal was rejected because it would increase divergence from the platform baseline.",
           "goodConsequences": [
-            "Avoids disruptive vendor change during an active delivery cycle",
-            "Daily tracking ensures the delay does not silently extend beyond the agreed window"
+            "Keeps Beta aligned with the source platform decision",
+            "Reduces duplicate architecture work"
           ],
           "badConsequences": [
-            "Compensating controls are not equivalent to the patch — residual risk remains elevated",
-            "If the vendor delays beyond the agreed date, escalation options narrow"
+            "Portal timing is now coupled to upstream cutover readiness"
           ],
-          "moreInfo": "Exception expires when vendor confirms patch deployment. Escalation criteria: delay extends past Apr 30, 2026.",
+          "moreInfo": "This is a local project decision linked to shared decision SH-DEC-0001.",
           "approvalChain": [
-            "Risk review logged",
-            "Committee deferral recorded"
+            "Beta architecture review complete",
+            "Delivery board approval recorded"
+          ]
+        },
+        {
+          "id": "DEC-0402",
+          "title": "Split Launch Into Two Cohorts",
+          "summary": "Launch the portal to a smaller first cohort before the broad regional rollout.",
+          "status": "Implemented",
+          "deciders": "Program Management Office",
+          "date": "Apr 12, 2026",
+          "linkedRisks": [
+            "RSK-0208",
+            "RSK-0209"
+          ],
+          "context": "The program wanted a safer launch ramp while translation and support readiness stabilized.",
+          "decisionDrivers": [
+            "Reduce initial support load",
+            "Create room for translation corrections",
+            "Preserve launch momentum"
+          ],
+          "consideredOptions": [
+            "Use two launch cohorts",
+            "Launch to all regions at once",
+            "Delay the entire launch"
+          ],
+          "outcome": "The PMO approved a two-cohort launch plan to reduce risk while preserving customer momentum.",
+          "goodConsequences": [
+            "Provides a contained first wave for learning",
+            "Improves support readiness"
+          ],
+          "badConsequences": [
+            "Creates a longer launch management period"
+          ],
+          "moreInfo": "Cohort one targets early-adopter regions.",
+          "approvalChain": [
+            "PMO approval complete"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "proj-gamma-demo",
+      "name": "Project Gamma Demo",
+      "description": "Analytics and data operations project that also publishes shared controls and decisions.",
+      "createdAt": "2026-02-03",
+      "scoringModel": {
+        "likelihood": [
+          {
+            "value": 1,
+            "label": "Rare",
+            "description": "Unlikely to occur except in exceptional circumstances."
+          },
+          {
+            "value": 2,
+            "label": "Unlikely",
+            "description": "Could occur, but not expected during normal execution."
+          },
+          {
+            "value": 3,
+            "label": "Possible",
+            "description": "Reasonably plausible and should be considered in planning."
+          },
+          {
+            "value": 4,
+            "label": "Likely",
+            "description": "Expected to occur in many realistic scenarios."
+          },
+          {
+            "value": 5,
+            "label": "Almost Certain",
+            "description": "Expected to occur frequently or is already emerging."
+          }
+        ],
+        "impact": [
+          {
+            "value": 1,
+            "label": "Minimal",
+            "description": "Minor effect with little operational disruption."
+          },
+          {
+            "value": 2,
+            "label": "Minor",
+            "description": "Limited impact requiring small local adjustments."
+          },
+          {
+            "value": 3,
+            "label": "Moderate",
+            "description": "Noticeable impact to delivery, cost, or performance."
+          },
+          {
+            "value": 4,
+            "label": "Major",
+            "description": "Serious disruption requiring management attention and recovery effort."
+          },
+          {
+            "value": 5,
+            "label": "Severe",
+            "description": "Critical impact to mission, compliance, or core service continuity."
+          }
+        ]
+      },
+      "risks": [
+        {
+          "id": "RSK-0304",
+          "originKey": "gamma-risk-shared-data-quality",
+          "sharedRiskId": "SH-RSK-0002",
+          "sharedRiskRole": "source",
+          "sharedParentVersionSeen": 1,
+          "sharedReviewStatus": "current",
+          "sharedOverrideRationale": "",
+          "title": "Reference Data Drift Breaks Downstream Analytics",
+          "statement": "IF master reference data is refreshed without downstream mapping validation, THEN analytics and reporting jobs may misclassify critical records, RESULTING IN incorrect decisions and recovery effort across dependent teams.",
+          "trigger": "master reference data is refreshed without downstream mapping validation",
+          "consequence": "analytics and reporting jobs may misclassify critical records",
+          "resultingIn": "incorrect decisions and recovery effort across dependent teams",
+          "status": "Active",
+          "severity": "High",
+          "owner": "A. Chen",
+          "likelihood": 4,
+          "impact": 4,
+          "residualRating": "High (16)",
+          "responseType": "Mitigate",
+          "project": "Gamma Data Hub",
+          "lastUpdated": "2026-04-19T19:00:00.000Z",
+          "dueDate": "2026-04-30",
+          "mitigation": "Add schema and mapping validation gates before each reference data publication and alert subscribers on breaking changes.",
+          "contingency": "Revert the reference data package and suspend downstream refresh jobs until mapping validation passes.",
+          "linkedDecision": "DEC-0501",
+          "attachments": 2,
+          "comments": 3,
+          "createdBy": "Demo seed",
+          "internalOnly": false,
+          "history": [
+            {
+              "label": "Shared risk published",
+              "meta": "Project Gamma Demo",
+              "at": "2026-04-19T19:00:00.000Z"
+            }
+          ]
+        },
+        {
+          "id": "RSK-0305",
+          "originKey": "gamma-risk-etl-capacity",
+          "title": "ETL Capacity Falls Behind Forecast",
+          "statement": "IF reporting demand grows faster than planned ETL capacity, THEN overnight processing may overrun the reporting window, RESULTING IN stale dashboards and delayed business decisions.",
+          "trigger": "reporting demand grows faster than planned ETL capacity",
+          "consequence": "overnight processing may overrun the reporting window",
+          "resultingIn": "stale dashboards and delayed business decisions",
+          "status": "Monitoring",
+          "severity": "Medium",
+          "owner": "Dana Wu",
+          "likelihood": 3,
+          "impact": 3,
+          "residualRating": "Medium (9)",
+          "responseType": "Mitigate",
+          "project": "Gamma Data Hub",
+          "lastUpdated": "2026-04-17T08:30:00.000Z",
+          "dueDate": "2026-05-08",
+          "mitigation": "Tune batch windows and reallocate capacity to the highest-value pipelines.",
+          "contingency": "Delay lower-priority dashboard refreshes until the next cycle.",
+          "linkedDecision": "None",
+          "attachments": 1,
+          "comments": 1,
+          "createdBy": "Demo seed",
+          "internalOnly": true,
+          "history": [
+            {
+              "label": "Risk created",
+              "meta": "Demo seed",
+              "at": "2026-04-11T08:30:00.000Z"
+            }
+          ]
+        }
+      ],
+      "decisions": [
+        {
+          "id": "DEC-0501",
+          "sharedDecisionId": "SH-DEC-0002",
+          "title": "Publish Reference Data Contract Checks",
+          "summary": "Require validation of schema and mapping contracts before each shared reference data release.",
+          "status": "Approved",
+          "deciders": "Data Governance Board",
+          "date": "Apr 19, 2026",
+          "linkedRisks": [
+            "RSK-0304"
+          ],
+          "context": "Multiple projects rely on shared reference data packages from Gamma. The board wanted one reusable control to reduce downstream reconciliation effort.",
+          "decisionDrivers": [
+            "Protect downstream consumers from breaking mapping changes",
+            "Create one publish gate for reference data releases",
+            "Support repeatable governance across subscriber projects"
+          ],
+          "consideredOptions": [
+            "Require contract checks before each release",
+            "Rely on subscriber-side validation only",
+            "Freeze reference data changes until the next quarter"
+          ],
+          "outcome": "Gamma approved a release gate that validates schema and mapping contracts before each shared reference data publication.",
+          "goodConsequences": [
+            "Reduces downstream rework",
+            "Creates one reusable publication rule"
+          ],
+          "badConsequences": [
+            "Adds a release gate to reference data changes"
+          ],
+          "moreInfo": "This is the source shared decision for SH-DEC-0002.",
+          "approvalChain": [
+            "Data governance review complete",
+            "Board approval recorded"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "proj-delta-demo",
+      "name": "Project Delta Demo",
+      "description": "Field operations rollout used to test subscriber projects, linked local risks, and selective HTML export.",
+      "createdAt": "2026-02-20",
+      "scoringModel": {
+        "likelihood": [
+          {
+            "value": 1,
+            "label": "Rare",
+            "description": "Unlikely to occur except in exceptional circumstances."
+          },
+          {
+            "value": 2,
+            "label": "Unlikely",
+            "description": "Could occur, but not expected during normal execution."
+          },
+          {
+            "value": 3,
+            "label": "Possible",
+            "description": "Reasonably plausible and should be considered in planning."
+          },
+          {
+            "value": 4,
+            "label": "Likely",
+            "description": "Expected to occur in many realistic scenarios."
+          },
+          {
+            "value": 5,
+            "label": "Almost Certain",
+            "description": "Expected to occur frequently or is already emerging."
+          }
+        ],
+        "impact": [
+          {
+            "value": 1,
+            "label": "Minimal",
+            "description": "Minor effect with little operational disruption."
+          },
+          {
+            "value": 2,
+            "label": "Minor",
+            "description": "Limited impact requiring small local adjustments."
+          },
+          {
+            "value": 3,
+            "label": "Moderate",
+            "description": "Noticeable impact to delivery, cost, or performance."
+          },
+          {
+            "value": 4,
+            "label": "Major",
+            "description": "Serious disruption requiring management attention and recovery effort."
+          },
+          {
+            "value": 5,
+            "label": "Severe",
+            "description": "Critical impact to mission, compliance, or core service continuity."
+          }
+        ]
+      },
+      "risks": [
+        {
+          "id": "RSK-0405",
+          "originKey": "delta-risk-linked-reference-data",
+          "sharedRiskId": "SH-RSK-0002",
+          "sharedRiskRole": "linked",
+          "sharedParentVersionSeen": 1,
+          "sharedReviewStatus": "updated_after_review",
+          "sharedOverrideRationale": "Field operations added local safeguards for offline sync and dispatch timing while keeping the upstream data quality trigger.",
+          "title": "Reference Data Drift Breaks Dispatch Rules",
+          "statement": "IF master reference data is refreshed without downstream mapping validation, THEN field dispatch rules may classify jobs incorrectly, RESULTING IN missed appointments and manual replanning.",
+          "trigger": "master reference data is refreshed without downstream mapping validation",
+          "consequence": "field dispatch rules may classify jobs incorrectly",
+          "resultingIn": "missed appointments and manual replanning",
+          "status": "Active",
+          "severity": "High",
+          "owner": "Miguel Alvarez",
+          "likelihood": 4,
+          "impact": 4,
+          "residualRating": "High (16)",
+          "responseType": "Mitigate",
+          "project": "Delta Field Operations",
+          "lastUpdated": "2026-04-20T09:40:00.000Z",
+          "dueDate": "2026-05-01",
+          "mitigation": "Validate field mapping packages in the dispatch sandbox and require subscriber sign-off before each reference data release reaches production routes.",
+          "contingency": "Freeze dispatch updates and rerun the last known-good mapping package while operations manually triage affected routes.",
+          "linkedDecision": "DEC-0601",
+          "attachments": 2,
+          "comments": 3,
+          "createdBy": "Demo seed",
+          "internalOnly": false,
+          "history": [
+            {
+              "label": "Linked local risk created from shared risk SH-RSK-0002",
+              "meta": "Project Delta Demo",
+              "at": "2026-04-19T20:15:00.000Z"
+            },
+            {
+              "label": "Local mitigation updated after review",
+              "meta": "Miguel Alvarez",
+              "at": "2026-04-20T09:40:00.000Z"
+            }
+          ]
+        },
+        {
+          "id": "RSK-0406",
+          "originKey": "delta-risk-mobile-device-stock",
+          "title": "Field Device Stock Arrives Late",
+          "statement": "IF replacement field devices arrive after technician onboarding begins, THEN mobile rollout readiness will slip, RESULTING IN manual workarounds and reduced adoption.",
+          "trigger": "replacement field devices arrive after technician onboarding begins",
+          "consequence": "mobile rollout readiness will slip",
+          "resultingIn": "manual workarounds and reduced adoption",
+          "status": "Monitoring",
+          "severity": "Medium",
+          "owner": "Tara Singh",
+          "likelihood": 3,
+          "impact": 3,
+          "residualRating": "Medium (9)",
+          "responseType": "Transfer",
+          "project": "Delta Field Operations",
+          "lastUpdated": "2026-04-13T17:30:00.000Z",
+          "dueDate": "2026-05-05",
+          "mitigation": "Stage spare devices and confirm supplier delivery status twice weekly.",
+          "contingency": "Borrow stock from the training pool for wave one technicians.",
+          "linkedDecision": "None",
+          "attachments": 1,
+          "comments": 1,
+          "createdBy": "Demo seed",
+          "internalOnly": false,
+          "history": [
+            {
+              "label": "Risk created",
+              "meta": "Demo seed",
+              "at": "2026-04-13T17:30:00.000Z"
+            }
+          ]
+        }
+      ],
+      "decisions": [
+        {
+          "id": "DEC-0601",
+          "sharedDecisionId": "SH-DEC-0002",
+          "title": "Adopt Shared Reference Data Contract Checks",
+          "summary": "Use Gamma's shared data publication checks for field dispatch integrations.",
+          "status": "Approved",
+          "deciders": "Operations Governance Forum",
+          "date": "Apr 20, 2026",
+          "linkedRisks": [
+            "RSK-0405"
+          ],
+          "context": "Delta relies on Gamma-published reference data to classify jobs and dispatch technicians. The project adopted the shared decision and added a field-operations validation step.",
+          "decisionDrivers": [
+            "Reduce dispatch disruption from data drift",
+            "Stay aligned with Gamma's shared publication control",
+            "Create one subscriber acceptance workflow"
+          ],
+          "consideredOptions": [
+            "Adopt Gamma's shared decision",
+            "Build a Delta-only validation rule set",
+            "Accept post-release reconciliation"
+          ],
+          "outcome": "Delta adopted the shared Gamma publication decision and added a local dispatch sandbox check before release.",
+          "goodConsequences": [
+            "Aligns Delta with the upstream shared control",
+            "Adds a focused local field validation step"
+          ],
+          "badConsequences": [
+            "Introduces another operational sign-off during release week"
+          ],
+          "moreInfo": "This is a subscriber project decision linked to SH-DEC-0002.",
+          "approvalChain": [
+            "Operations forum approval complete"
           ]
         }
       ]
     }
   ],
+  "sharedLibrary": {
+    "risks": [
+      {
+        "id": "SH-RSK-0001",
+        "referenceCode": "RSK-0101",
+        "title": "Zero-Trust Rollout Causes API Breakage",
+        "statement": "IF downstream services are not updated for per-session verification before cutover, THEN inter-service authentication failures could spike during rollout, RESULTING IN customer-facing outages and emergency rollback pressure.",
+        "trigger": "downstream services are not updated for per-session verification before cutover",
+        "consequence": "inter-service authentication failures could spike during rollout",
+        "status": "Active",
+        "owner": "Sarah Jenkins",
+        "upstreamLikelihood": 4,
+        "upstreamImpact": 5,
+        "responseSummary": "Complete service compatibility tests and require rollout evidence from all dependent teams before cutover.",
+        "sourceImpactScore": 5,
+        "sourceOriginRiskKey": "alpha-risk-zero-trust-cutover",
+        "sharedImpactProfile": {
+          "basis": "schedule",
+          "min": 2,
+          "max": 6,
+          "sourceScore": 5
+        },
+        "versionNumber": 2,
+        "createdAt": "2026-04-17T13:00:00.000Z",
+        "updatedAt": "2026-04-20T15:20:00.000Z",
+        "sharedAt": "2026-04-17T13:00:00.000Z",
+        "sourceProjectId": "proj-alpha-demo",
+        "isArchived": false,
+        "lastChangeSummary": [
+          "Likelihood increased after wider service dependency mapping",
+          "Portal subscriber created a linked local risk for rollout-specific mitigation"
+        ],
+        "history": [
+          {
+            "label": "Shared risk published",
+            "meta": "Source project",
+            "at": "2026-04-17T13:00:00.000Z"
+          },
+          {
+            "label": "Shared risk updated",
+            "meta": "Sarah Jenkins",
+            "at": "2026-04-20T15:20:00.000Z"
+          }
+        ]
+      },
+      {
+        "id": "SH-RSK-0002",
+        "referenceCode": "RSK-0304",
+        "title": "Reference Data Drift Breaks Downstream Analytics",
+        "statement": "IF master reference data is refreshed without downstream mapping validation, THEN analytics and reporting jobs may misclassify critical records, RESULTING IN incorrect decisions and recovery effort across dependent teams.",
+        "trigger": "master reference data is refreshed without downstream mapping validation",
+        "consequence": "analytics and reporting jobs may misclassify critical records",
+        "status": "Active",
+        "owner": "A. Chen",
+        "upstreamLikelihood": 4,
+        "upstreamImpact": 4,
+        "responseSummary": "Add schema and mapping validation gates before each reference data publication and alert subscribers on breaking changes.",
+        "sourceImpactScore": 4,
+        "sourceOriginRiskKey": "gamma-risk-shared-data-quality",
+        "sharedImpactProfile": {
+          "basis": "cost",
+          "min": 50000,
+          "max": 250000,
+          "sourceScore": 4
+        },
+        "versionNumber": 1,
+        "createdAt": "2026-04-19T19:00:00.000Z",
+        "updatedAt": "2026-04-19T19:00:00.000Z",
+        "sharedAt": "2026-04-19T19:00:00.000Z",
+        "sourceProjectId": "proj-gamma-demo",
+        "isArchived": false,
+        "lastChangeSummary": [
+          "Initial shared publication from Gamma"
+        ],
+        "history": [
+          {
+            "label": "Shared risk published",
+            "meta": "Source project",
+            "at": "2026-04-19T19:00:00.000Z"
+          }
+        ]
+      }
+    ],
+    "riskSubscriptions": [
+      {
+        "id": "SH-SUB-0001",
+        "sharedRiskId": "SH-RSK-0001",
+        "projectId": "proj-beta-demo",
+        "state": "linked",
+        "createdAt": "2026-04-18T12:20:00.000Z",
+        "updatedAt": "2026-04-20T14:10:00.000Z",
+        "lastSeenSharedRiskVersion": 2,
+        "lastReviewedSharedRiskVersion": 2,
+        "lastReviewedAt": "2026-04-20T14:10:00.000Z",
+        "reviewedByName": "Lena Ortiz",
+        "reviewComment": "Portal rollout controls aligned to the shared change with no upstream edits needed.",
+        "linkedLocalRiskId": "RSK-0207"
+      },
+      {
+        "id": "SH-SUB-0002",
+        "sharedRiskId": "SH-RSK-0001",
+        "projectId": "proj-gamma-demo",
+        "state": "watching",
+        "createdAt": "2026-04-18T17:00:00.000Z",
+        "updatedAt": "2026-04-18T17:00:00.000Z",
+        "lastSeenSharedRiskVersion": 2,
+        "lastReviewedSharedRiskVersion": null,
+        "lastReviewedAt": "",
+        "reviewedByName": "",
+        "reviewComment": "",
+        "linkedLocalRiskId": null
+      },
+      {
+        "id": "SH-SUB-0003",
+        "sharedRiskId": "SH-RSK-0002",
+        "projectId": "proj-delta-demo",
+        "state": "linked",
+        "createdAt": "2026-04-19T20:15:00.000Z",
+        "updatedAt": "2026-04-20T09:40:00.000Z",
+        "lastSeenSharedRiskVersion": 1,
+        "lastReviewedSharedRiskVersion": 1,
+        "lastReviewedAt": "2026-04-20T09:40:00.000Z",
+        "reviewedByName": "Miguel Alvarez",
+        "reviewComment": "Local dispatch mitigation added after shared risk review.",
+        "linkedLocalRiskId": "RSK-0405"
+      },
+      {
+        "id": "SH-SUB-0004",
+        "sharedRiskId": "SH-RSK-0002",
+        "projectId": "proj-alpha-demo",
+        "state": "watching",
+        "createdAt": "2026-04-20T08:00:00.000Z",
+        "updatedAt": "2026-04-20T08:00:00.000Z",
+        "lastSeenSharedRiskVersion": 1,
+        "lastReviewedSharedRiskVersion": null,
+        "lastReviewedAt": "",
+        "reviewedByName": "",
+        "reviewComment": "",
+        "linkedLocalRiskId": null
+      }
+    ],
+    "decisions": [
+      {
+        "id": "SH-DEC-0001",
+        "title": "Adopt Zero-Trust Protocol V2",
+        "context": "Identity architecture review found inconsistent session handling across multiple internal APIs. The program needed one shared decision that subscriber projects could reuse during rollout.",
+        "decisionDrivers": [
+          "Reduce credential replay risk",
+          "Create one identity control standard",
+          "Support multiple rollout projects with the same governance decision"
+        ],
+        "consideredOptions": [
+          "Adopt per-session verification across all internal services",
+          "Add monitoring only and keep long-lived tokens",
+          "Pilot zero-trust on privileged services only"
+        ],
+        "outcome": "Alpha approved per-session verification across all internal services and published the decision for subscriber projects to reuse.",
+        "goodConsequences": [
+          "Creates a reusable decision for dependent teams",
+          "Reduces duplicate architecture review"
+        ],
+        "badConsequences": [
+          "Requires broad coordination across subscribers"
+        ],
+        "moreInfo": "Source project: Project Alpha Demo.",
+        "updatedAt": "2026-04-18T09:00:00.000Z",
+        "sourceProjectId": "proj-alpha-demo"
+      },
+      {
+        "id": "SH-DEC-0002",
+        "title": "Publish Reference Data Contract Checks",
+        "context": "Gamma needed one shared data publication decision for projects that depend on shared reference data packages.",
+        "decisionDrivers": [
+          "Protect downstream consumers from breaking mapping changes",
+          "Create a reusable publication control",
+          "Reduce reconciliation effort after releases"
+        ],
+        "consideredOptions": [
+          "Require contract checks before each release",
+          "Rely on subscriber-side validation only",
+          "Freeze reference data changes"
+        ],
+        "outcome": "Gamma approved contract checks before each shared reference data release and published the decision for subscriber projects to adopt.",
+        "goodConsequences": [
+          "Creates one reusable governance control for reference data",
+          "Reduces downstream incident risk"
+        ],
+        "badConsequences": [
+          "Adds a release gate to data changes"
+        ],
+        "moreInfo": "Source project: Project Gamma Demo.",
+        "updatedAt": "2026-04-19T19:10:00.000Z",
+        "sourceProjectId": "proj-gamma-demo"
+      }
+    ]
+  },
   "registry": {
-    "documentId": "registry-demo-alpha",
-    "name": "Project Alpha Demo Master",
-    "revision": 4,
-    "contentHash": "fnv1a32:a5753279",
-    "parentRevision": 3,
-    "parentContentHash": "fnv1a32:demo0003",
-    "lastModifiedAt": "2026-04-18T18:45:00.000Z",
+    "documentId": "registry-demo-expanded",
+    "name": "Governance Register Demo Board",
+    "revision": 7,
+    "contentHash": "fnv1a32:demo0007",
+    "parentRevision": 6,
+    "parentContentHash": "fnv1a32:demo0006",
+    "lastModifiedAt": "2026-04-20T17:30:00.000Z",
     "lastModifiedBy": "Demo seed"
   }
 }
