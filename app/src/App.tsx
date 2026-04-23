@@ -51,7 +51,13 @@ type Decision = {
   summary: string;
   status: DecisionStatus;
   deciders: string;
+  deciderRoles: string;
   date: string;
+  createdAt: string;
+  updatedAt: string;
+  statusUpdatedAt: string;
+  approvedAt: string;
+  statusLocked: boolean;
   linkedRisks: string[];
   context: string;
   decisionDrivers: string[];
@@ -145,6 +151,7 @@ type SharedDecision = {
 
 type Project = {
   id: string;
+  projectKey: string;
   name: string;
   description: string;
   createdAt: string;
@@ -164,12 +171,17 @@ type RegistryMetadata = {
   lastModifiedBy: string;
 };
 
+type ReadOnlyExportContentMode = 'both' | 'risks' | 'decisions';
+
 type AppSnapshot = {
   version: string;
   exportedAt: string;
   registry?: RegistryMetadata;
   activeProjectId: string;
   projects: Project[];
+  readOnlyExport?: {
+    contentMode: ReadOnlyExportContentMode;
+  };
   sharedLibrary?: {
     risks: SharedRisk[];
     decisions: SharedDecision[];
@@ -277,6 +289,7 @@ function escapeHtml(value: string) {
 function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
   const boardName = snapshot.registry?.name || 'Governance Register';
   const exportedAt = snapshot.exportedAt;
+  const contentMode = snapshot.readOnlyExport?.contentMode ?? 'both';
   const safeSnapshotJson = JSON.stringify(snapshot)
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
@@ -592,7 +605,7 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
 
         <section class="toolbar">
           <div class="pill-row" id="projectTabs"></div>
-          <div class="pill-row">
+          <div class="pill-row" id="recordTabs">
             <button class="tab active" data-record-type="risks" type="button">Risks</button>
             <button class="tab" data-record-type="decisions" type="button">Decisions</button>
           </div>
@@ -625,14 +638,17 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
     <script id="board-data" type="application/json">${safeSnapshotJson}</script>
     <script>
       const snapshot = JSON.parse(document.getElementById('board-data').textContent);
+      const contentMode = snapshot.readOnlyExport?.contentMode || '${contentMode}';
+      const availableRecordTypes = contentMode === 'both' ? ['risks', 'decisions'] : [contentMode];
       const state = {
         projectId: snapshot.activeProjectId || snapshot.projects[0]?.id || '',
-        recordType: 'risks',
+        recordType: availableRecordTypes[0] || 'risks',
         selectedId: '',
       };
 
       const els = {
         projectTabs: document.getElementById('projectTabs'),
+        recordTabs: document.getElementById('recordTabs'),
         tableHost: document.getElementById('tableHost'),
         detailHost: document.getElementById('detailHost'),
         tableTitle: document.getElementById('tableTitle'),
@@ -647,6 +663,17 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
 
       function formatDateTime(value) {
         if (!value) return 'Not available';
+        if (/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) {
+          const [year, month, day] = value.split('-').map(Number);
+          const dateOnly = new Date(year, month - 1, day);
+          if (!Number.isNaN(dateOnly.getTime())) {
+            return new Intl.DateTimeFormat(undefined, {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+            }).format(dateOnly);
+          }
+        }
         const date = new Date(value);
         if (Number.isNaN(date.getTime())) return String(value);
         return new Intl.DateTimeFormat(undefined, {
@@ -672,6 +699,22 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
         if (['high', 'rejected', 'closed'].includes(normalized)) return 'chip high';
         if (['medium', 'proposed', 'deferred', 'pending', 'monitoring'].includes(normalized)) return 'chip medium';
         return 'chip low';
+      }
+
+      function formatScopedId(project, recordId) {
+        const key = String(project?.projectKey || project?.name || 'PRJ')
+          .toUpperCase()
+          .replace(/[^A-Z0-9]+/g, '');
+        return (key || 'PRJ') + '-' + recordId;
+      }
+
+      function getDecisionActivityLabel(decision) {
+        const value = decision.approvedAt || decision.statusUpdatedAt || decision.updatedAt || decision.createdAt || decision.date;
+        if (decision.approvedAt) return 'Approved ' + formatDateTime(value);
+        if (decision.statusUpdatedAt) return 'Status updated ' + formatDateTime(value);
+        if (decision.updatedAt) return 'Updated ' + formatDateTime(value);
+        if (decision.createdAt) return 'Created ' + formatDateTime(value);
+        return formatDateTime(value);
       }
 
       function getProject() {
@@ -746,7 +789,7 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
                 <th>Decision</th>
                 <th>Status</th>
                 <th>Deciders</th>
-                <th>Date</th>
+                <th>Updated</th>
                 <th>Linked Risks</th>
               </tr>
             </thead>
@@ -758,8 +801,8 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
                     <div class="muted" style="margin-top: 4px;">\${escapeHtml(decision.outcome || decision.context || 'No decision outcome recorded.')}</div>
                   </td>
                   <td><span class="\${statusChipClass(decision.status)}">\${escapeHtml(decision.status)}</span></td>
-                  <td>\${escapeHtml(decision.deciders || 'Not assigned')}</td>
-                  <td>\${escapeHtml(formatDateTime(decision.date))}</td>
+                  <td>\${escapeHtml(decision.deciders || 'Not assigned')}\${decision.deciderRoles ? '<div class="muted" style="margin-top: 4px;">' + escapeHtml(decision.deciderRoles) + '</div>' : ''}</td>
+                  <td>\${escapeHtml(getDecisionActivityLabel(decision))}</td>
                   <td>\${escapeHtml(String((decision.linkedRisks || []).length))}</td>
                 </tr>
               \`).join('')}
@@ -772,7 +815,7 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
         els.detailHost.innerHTML = \`
           <div class="detail-stack">
             <div class="detail-header">
-              <div class="eyebrow">\${escapeHtml(risk.id)}</div>
+              <div class="eyebrow">\${escapeHtml(formatScopedId(snapshot.projects.find((project) => project.id === state.projectId), risk.id))}</div>
               <h3>\${escapeHtml(risk.title)}</h3>
             </div>
             <div class="detail-grid">
@@ -833,7 +876,7 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
         els.detailHost.innerHTML = \`
           <div class="detail-stack">
             <div class="detail-header">
-              <div class="eyebrow">\${escapeHtml(decision.id)}</div>
+              <div class="eyebrow">\${escapeHtml(formatScopedId(snapshot.projects.find((project) => project.id === state.projectId), decision.id))}</div>
               <h3>\${escapeHtml(decision.title)}</h3>
             </div>
             <div class="detail-grid">
@@ -842,8 +885,8 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
                 <div class="value"><span class="\${statusChipClass(decision.status)}">\${escapeHtml(decision.status)}</span></div>
               </div>
               <div class="detail-card">
-                <div class="label">Date</div>
-                <div class="value">\${escapeHtml(formatDateTime(decision.date))}</div>
+                <div class="label">Updated</div>
+                <div class="value">\${escapeHtml(getDecisionActivityLabel(decision))}</div>
               </div>
               <div class="detail-card wide">
                 <div class="label">Context</div>
@@ -864,6 +907,14 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
               <div class="detail-card">
                 <div class="label">Deciders</div>
                 <div class="value">\${escapeHtml(decision.deciders || 'Not assigned')}</div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Roles</div>
+                <div class="value">\${escapeHtml(decision.deciderRoles || 'Not assigned')}</div>
+              </div>
+              <div class="detail-card">
+                <div class="label">Decision Date</div>
+                <div class="value">\${escapeHtml(formatDateTime(decision.date))}</div>
               </div>
               <div class="detail-card">
                 <div class="label">Linked Risks</div>
@@ -904,9 +955,13 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
           ? project.name + ' · ' + (state.recordType === 'risks' ? 'Read-only risk register' : 'Read-only decision register')
           : 'No project selected';
         els.tableCount.textContent = records.length + ' record' + (records.length === 1 ? '' : 's');
+        els.recordTabs.style.display = availableRecordTypes.length > 1 ? 'flex' : 'none';
 
         document.querySelectorAll('[data-record-type]').forEach((button) => {
-          button.classList.toggle('active', button.getAttribute('data-record-type') === state.recordType);
+          const recordType = button.getAttribute('data-record-type');
+          const enabled = availableRecordTypes.includes(recordType);
+          button.classList.toggle('active', recordType === state.recordType);
+          button.style.display = enabled ? '' : 'none';
         });
 
         renderProjectTabs();
@@ -926,7 +981,11 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
         }
 
         if (target.hasAttribute('data-record-type')) {
-          state.recordType = target.getAttribute('data-record-type');
+          const nextRecordType = target.getAttribute('data-record-type');
+          if (!availableRecordTypes.includes(nextRecordType)) {
+            return;
+          }
+          state.recordType = nextRecordType;
           state.selectedId = '';
           render();
           return;
@@ -1083,9 +1142,214 @@ function loadEditorName() {
   }
 }
 
+function sanitizeProjectKey(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]+/g, '');
+}
+
+function deriveProjectKey(name: string, fallback = 'PRJ') {
+  const words = name
+    .trim()
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .filter((word) => !['project', 'program', 'workspace', 'board'].includes(word.toLowerCase()));
+  const acronym = sanitizeProjectKey(words.slice(0, 4).map((word) => word[0]).join(''));
+  if (acronym.length >= 2) {
+    return acronym;
+  }
+
+  const compact = sanitizeProjectKey(name);
+  if (compact.length >= 3) {
+    return compact.slice(0, 6);
+  }
+
+  return sanitizeProjectKey(fallback).slice(0, 6) || 'PRJ';
+}
+
+function ensureUniqueProjectKeys(projects: Project[]) {
+  const usedKeys = new Set<string>();
+  return projects.map((project) => {
+    const baseKey = sanitizeProjectKey(project.projectKey || deriveProjectKey(project.name, project.id)) || 'PRJ';
+    let nextKey = baseKey;
+    let duplicateIndex = 2;
+    while (usedKeys.has(nextKey)) {
+      nextKey = `${baseKey}${duplicateIndex}`;
+      duplicateIndex += 1;
+    }
+    usedKeys.add(nextKey);
+    return {...project, projectKey: nextKey};
+  });
+}
+
+function formatProjectScopedId(projectKey: string, recordId: string) {
+  const normalizedProjectKey = sanitizeProjectKey(projectKey) || 'PRJ';
+  return `${normalizedProjectKey}-${recordId}`;
+}
+
+function formatDisplayDateTime(value: string) {
+  if (!value) return 'Not available';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    if (!Number.isNaN(date.getTime())) {
+      return new Intl.DateTimeFormat(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      }).format(date);
+    }
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function getDecisionActivityAt(decision: Decision) {
+  return decision.approvedAt || decision.statusUpdatedAt || decision.updatedAt || decision.createdAt || decision.date;
+}
+
+function getDecisionActivityLabel(decision: Decision) {
+  if (decision.approvedAt) {
+    return `Approved ${formatDisplayDateTime(decision.approvedAt)}`;
+  }
+  if (decision.statusUpdatedAt) {
+    return `Status updated ${formatDisplayDateTime(decision.statusUpdatedAt)}`;
+  }
+  if (decision.updatedAt) {
+    return `Updated ${formatDisplayDateTime(decision.updatedAt)}`;
+  }
+  if (decision.createdAt) {
+    return `Created ${formatDisplayDateTime(decision.createdAt)}`;
+  }
+  return formatDisplayDateTime(decision.date);
+}
+
+function buildDecisionRecord(
+  input: Partial<Decision> & Record<string, unknown>,
+  defaults?: Partial<Decision>,
+): Decision {
+  const legacyDate = typeof input.date === 'string' && input.date ? input.date : defaults?.date ?? '';
+  const createdAt = typeof input.createdAt === 'string' && input.createdAt ? input.createdAt : defaults?.createdAt ?? legacyDate;
+  const updatedAt = typeof input.updatedAt === 'string' && input.updatedAt ? input.updatedAt : defaults?.updatedAt ?? '';
+  const statusUpdatedAt =
+    typeof input.statusUpdatedAt === 'string' && input.statusUpdatedAt
+      ? input.statusUpdatedAt
+      : defaults?.statusUpdatedAt ?? '';
+  const approvedAt =
+    typeof input.approvedAt === 'string'
+      ? input.approvedAt
+      : defaults?.approvedAt ??
+        ((input.status === 'Approved' || defaults?.status === 'Approved') ? legacyDate : '');
+
+  return {
+    id: typeof input.id === 'string' ? input.id : defaults?.id ?? formatDecisionSequence(1),
+    sharedDecisionId:
+      typeof input.sharedDecisionId === 'string' ? input.sharedDecisionId : defaults?.sharedDecisionId,
+    title: typeof input.title === 'string' ? input.title : defaults?.title ?? 'Untitled Decision',
+    summary: typeof input.summary === 'string' ? input.summary : defaults?.summary ?? '',
+    status:
+      input.status === 'Approved' ||
+      input.status === 'Implemented' ||
+      input.status === 'Proposed' ||
+      input.status === 'Deferred' ||
+      input.status === 'Rejected'
+        ? input.status
+        : defaults?.status ?? 'Proposed',
+    deciders:
+      typeof input.deciders === 'string'
+        ? input.deciders
+        : typeof input.authority === 'string'
+          ? input.authority
+          : defaults?.deciders ?? '',
+    deciderRoles:
+      typeof input.deciderRoles === 'string'
+        ? input.deciderRoles
+        : typeof input.deciderRole === 'string'
+          ? input.deciderRole
+          : defaults?.deciderRoles ?? '',
+    date: typeof input.date === 'string' ? input.date : defaults?.date ?? '',
+    createdAt,
+    updatedAt,
+    statusUpdatedAt,
+    approvedAt,
+    statusLocked:
+      typeof input.statusLocked === 'boolean'
+        ? input.statusLocked
+        : defaults?.statusLocked ?? ((input.status ?? defaults?.status) === 'Approved' && Boolean(approvedAt)),
+    linkedRisks: Array.isArray(input.linkedRisks)
+      ? input.linkedRisks.filter((item): item is string => typeof item === 'string')
+      : defaults?.linkedRisks ?? [],
+    context:
+      typeof input.context === 'string'
+        ? input.context
+        : typeof input.rationale === 'string'
+          ? input.rationale
+          : defaults?.context ?? '',
+    decisionDrivers: Array.isArray(input.decisionDrivers)
+      ? input.decisionDrivers.filter((item): item is string => typeof item === 'string')
+      : defaults?.decisionDrivers ?? [],
+    consideredOptions: Array.isArray(input.consideredOptions)
+      ? input.consideredOptions.filter((item): item is string => typeof item === 'string')
+      : Array.isArray(input.alternatives)
+        ? input.alternatives.filter((item): item is string => typeof item === 'string')
+        : defaults?.consideredOptions ?? [],
+    outcome: typeof input.outcome === 'string' ? input.outcome : defaults?.outcome ?? '',
+    goodConsequences: Array.isArray(input.goodConsequences)
+      ? input.goodConsequences.filter((item): item is string => typeof item === 'string')
+      : defaults?.goodConsequences ?? [],
+    badConsequences: Array.isArray(input.badConsequences)
+      ? input.badConsequences.filter((item): item is string => typeof item === 'string')
+      : defaults?.badConsequences ?? [],
+    moreInfo: typeof input.moreInfo === 'string' ? input.moreInfo : defaults?.moreInfo ?? '',
+    approvalChain: Array.isArray(input.approvalChain)
+      ? input.approvalChain.filter((item): item is string => typeof item === 'string')
+      : defaults?.approvalChain ?? [],
+  };
+}
+
+function applyDecisionUpdates(current: Decision, updates: Partial<Decision>) {
+  const nowIso = new Date().toISOString();
+  const nextStatus = updates.status ?? current.status;
+  const statusChanged = typeof updates.status === 'string' && updates.status !== current.status;
+  const unlockingStatus = updates.statusLocked === false;
+  const blockedStatusChange = current.statusLocked && statusChanged && !unlockingStatus;
+  const approvedNow = statusChanged && nextStatus === 'Approved' && !current.approvedAt;
+
+  return buildDecisionRecord(
+    {
+      ...current,
+      ...updates,
+      status: blockedStatusChange ? current.status : nextStatus,
+      updatedAt: nowIso,
+      statusUpdatedAt: blockedStatusChange ? current.statusUpdatedAt : statusChanged ? nowIso : current.statusUpdatedAt,
+      approvedAt:
+        blockedStatusChange
+          ? current.approvedAt
+          : approvedNow
+            ? nowIso
+            : typeof updates.approvedAt === 'string'
+              ? updates.approvedAt
+              : current.approvedAt,
+      statusLocked:
+        typeof updates.statusLocked === 'boolean'
+          ? updates.statusLocked
+          : approvedNow
+            ? true
+            : current.statusLocked,
+    },
+    current,
+  );
+}
+
 function createBlankProject(overrides?: Partial<Project>): Project {
   return {
     id: overrides?.id ?? `proj-${Date.now()}`,
+    projectKey: overrides?.projectKey ?? deriveProjectKey(overrides?.name ?? overrides?.id ?? 'Project'),
     name: overrides?.name ?? 'New Project',
     description:
       overrides?.description ?? 'Blank workspace ready for your first risk and decision records.',
@@ -2119,58 +2383,7 @@ function normalizeRiskRecord(
 }
 
 function normalizeDecisionRecord(input: Partial<Decision> & Record<string, unknown>): Decision {
-  const linkedRisks = Array.isArray(input.linkedRisks)
-    ? input.linkedRisks.filter((item): item is string => typeof item === 'string')
-    : [];
-  const approvalChain = Array.isArray(input.approvalChain)
-    ? input.approvalChain.filter((item): item is string => typeof item === 'string')
-    : [];
-
-  return {
-    id: typeof input.id === 'string' ? input.id : formatDecisionSequence(1),
-    sharedDecisionId: typeof input.sharedDecisionId === 'string' ? input.sharedDecisionId : undefined,
-    title: typeof input.title === 'string' ? input.title : 'Untitled Decision',
-    summary: typeof input.summary === 'string' ? input.summary : '',
-    status:
-      input.status === 'Approved' ||
-      input.status === 'Implemented' ||
-      input.status === 'Proposed' ||
-      input.status === 'Deferred' ||
-      input.status === 'Rejected'
-        ? input.status
-        : 'Proposed',
-    deciders:
-      typeof input.deciders === 'string'
-        ? input.deciders
-        : typeof input.authority === 'string'
-          ? input.authority
-          : '',
-    date: typeof input.date === 'string' ? input.date : '',
-    linkedRisks,
-    context:
-      typeof input.context === 'string'
-        ? input.context
-        : typeof input.rationale === 'string'
-          ? input.rationale
-          : '',
-    decisionDrivers: Array.isArray(input.decisionDrivers)
-      ? input.decisionDrivers.filter((item): item is string => typeof item === 'string')
-      : [],
-    consideredOptions: Array.isArray(input.consideredOptions)
-      ? input.consideredOptions.filter((item): item is string => typeof item === 'string')
-      : Array.isArray(input.alternatives)
-        ? input.alternatives.filter((item): item is string => typeof item === 'string')
-        : [],
-    outcome: typeof input.outcome === 'string' ? input.outcome : '',
-    goodConsequences: Array.isArray(input.goodConsequences)
-      ? input.goodConsequences.filter((item): item is string => typeof item === 'string')
-      : [],
-    badConsequences: Array.isArray(input.badConsequences)
-      ? input.badConsequences.filter((item): item is string => typeof item === 'string')
-      : [],
-    moreInfo: typeof input.moreInfo === 'string' ? input.moreInfo : '',
-    approvalChain,
-  };
+  return buildDecisionRecord(input);
 }
 
 function normalizeScoringModel(model: RiskScoringModel | undefined) {
@@ -2329,6 +2542,10 @@ function normalizeSharedDecisionRecord(input: Partial<SharedDecision> & Record<s
 function normalizeProjectRecord(input: Project, context: RecordNormalizationContext = {}): Project {
   return {
     ...input,
+    projectKey:
+      typeof input.projectKey === 'string' && input.projectKey
+        ? sanitizeProjectKey(input.projectKey)
+        : deriveProjectKey(input.name, input.id),
     risks: Array.isArray(input.risks)
       ? input.risks.map((risk) =>
           normalizeRiskRecord(risk as Partial<Risk> & Record<string, unknown>, {
@@ -2506,12 +2723,14 @@ function parseAppSnapshot(
   }
 
   const snapshotExportedAt = typeof raw.exportedAt === 'string' ? raw.exportedAt : undefined;
-  const projects = raw.projects.map((project) =>
-    normalizeProjectRecord(project as Project, {
-      snapshotExportedAt,
-      projectCreatedAt:
-        project && typeof project === 'object' && typeof project.createdAt === 'string' ? project.createdAt : undefined,
-    }),
+  const projects = ensureUniqueProjectKeys(
+    raw.projects.map((project) =>
+      normalizeProjectRecord(project as Project, {
+        snapshotExportedAt,
+        projectCreatedAt:
+          project && typeof project === 'object' && typeof project.createdAt === 'string' ? project.createdAt : undefined,
+      }),
+    ),
   );
   const activeProjectId =
     typeof raw.activeProjectId === 'string' && projects.some((project) => project.id === raw.activeProjectId)
@@ -2733,7 +2952,7 @@ function loadProjects(): Project[] {
     if (!stored) return initialProjects;
     const parsed = JSON.parse(stored) as Project[];
     if (!Array.isArray(parsed) || parsed.length === 0) return initialProjects;
-    return parsed.map((p) => normalizeProjectRecord(p));
+    return ensureUniqueProjectKeys(parsed.map((p) => normalizeProjectRecord(p)));
   } catch {
     return initialProjects;
   }
@@ -2829,6 +3048,7 @@ export default function App() {
   const [createDecisionOpen, setCreateDecisionOpen] = useState(false);
   const [readOnlyExportOpen, setReadOnlyExportOpen] = useState(false);
   const [readOnlyExportProjectIds, setReadOnlyExportProjectIds] = useState<string[]>([]);
+  const [readOnlyExportContentMode, setReadOnlyExportContentMode] = useState<ReadOnlyExportContentMode>('both');
   const [editorName, setEditorName] = useState<string>(() => loadEditorName());
   const [registrySession, setRegistrySession] = useState<RegistrySession>(() => ({
     sourceLabel: 'Local browser draft',
@@ -3063,8 +3283,18 @@ export default function App() {
   }
 
   function handleCreateProject(name: string, description: string) {
+    const baseName = name.trim() || 'Untitled Project';
+    const nextProjectKey = ensureUniqueProjectKeys([
+      ...projects,
+      createBlankProject({
+        name: baseName,
+        description: description.trim(),
+        scoringModel: defaultRiskScoringModel,
+      }),
+    ]).at(-1)?.projectKey;
     const newProject = createBlankProject({
-      name: name.trim() || 'Untitled Project',
+      name: baseName,
+      projectKey: nextProjectKey,
       description: description.trim(),
       scoringModel: defaultRiskScoringModel,
     });
@@ -3692,19 +3922,27 @@ export default function App() {
     title: string;
     status: DecisionStatus;
     deciders: string;
+    deciderRoles: string;
     date: string;
     context: string;
     decisionDrivers: string[];
     consideredOptions: string[];
     outcome: string;
   }) {
-    const next: Decision = {
+    const nowIso = new Date().toISOString();
+    const next: Decision = buildDecisionRecord({
       id: input.id.trim(),
       title: input.title.trim(),
       summary: '',
       status: input.status,
       deciders: input.deciders.trim(),
+      deciderRoles: input.deciderRoles.trim(),
       date: input.date.trim(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      statusUpdatedAt: nowIso,
+      approvedAt: input.status === 'Approved' ? nowIso : '',
+      statusLocked: input.status === 'Approved',
       context: input.context.trim(),
       linkedRisks: [],
       decisionDrivers: input.decisionDrivers,
@@ -3714,7 +3952,7 @@ export default function App() {
       badConsequences: [],
       moreInfo: '',
       approvalChain: [],
-    };
+    });
     updateActiveProject((project) => ({
       ...project,
       decisions: [next, ...project.decisions],
@@ -3838,14 +4076,21 @@ export default function App() {
       return;
     }
 
-    const next: Decision = {
+    const nowIso = new Date().toISOString();
+    const next: Decision = buildDecisionRecord({
       id: formatDecisionSequence(nextDecisionSequence),
       sharedDecisionId,
       title: sharedDecision.title,
       summary: '',
       status: 'Proposed',
       deciders: '',
+      deciderRoles: '',
       date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      statusUpdatedAt: nowIso,
+      approvedAt: '',
+      statusLocked: false,
       linkedRisks: [],
       context: sharedDecision.context,
       decisionDrivers: sharedDecision.decisionDrivers,
@@ -3855,7 +4100,7 @@ export default function App() {
       badConsequences: sharedDecision.badConsequences,
       moreInfo: sharedDecision.moreInfo,
       approvalChain: [],
-    };
+    });
 
     updateActiveProject((project) => ({
       ...project,
@@ -3868,9 +4113,7 @@ export default function App() {
   function handleUpdateDecision(decisionId: string, updates: Partial<Decision>) {
     updateActiveProject((project) => ({
       ...project,
-      decisions: project.decisions.map((d) =>
-        d.id === decisionId ? {...d, ...updates} : d,
-      ),
+      decisions: project.decisions.map((d) => (d.id === decisionId ? applyDecisionUpdates(d, updates) : d)),
     }));
   }
 
@@ -4002,10 +4245,11 @@ export default function App() {
     }
 
     setReadOnlyExportProjectIds(projects.map((project) => project.id));
+    setReadOnlyExportContentMode('both');
     setReadOnlyExportOpen(true);
   }
 
-  function handleExportReadOnlyBoard(selectedProjectIds: string[]) {
+  function handleExportReadOnlyBoard(selectedProjectIds: string[], contentMode: ReadOnlyExportContentMode) {
     if (!registrySession.baseDocumentId) {
       throw new Error('Open or start a board first before exporting a read-only view.');
     }
@@ -4014,13 +4258,21 @@ export default function App() {
     if (!filteredProjects.length) {
       throw new Error('Choose at least one project to include in the read-only export.');
     }
+    if (!['both', 'risks', 'decisions'].includes(contentMode)) {
+      throw new Error('Choose whether to export risks, decisions, or both.');
+    }
 
     const exportedAt = new Date().toISOString();
     const exportActiveProjectId = filteredProjects.some((project) => project.id === activeProjectId)
       ? activeProjectId
       : filteredProjects[0].id;
+    const exportProjects = filteredProjects.map((project) => ({
+      ...project,
+      risks: contentMode === 'decisions' ? [] : project.risks,
+      decisions: contentMode === 'risks' ? [] : project.decisions,
+    }));
     const snapshot = buildAppSnapshot(
-      filteredProjects,
+      exportProjects,
       exportActiveProjectId,
       sharedRisks,
       sharedRiskSubscriptions,
@@ -4035,9 +4287,12 @@ export default function App() {
         lastModifiedBy: editorName.trim() || registrySession.sourceLabel || 'Governance Register',
       },
     );
+    snapshot.readOnlyExport = {contentMode};
     const html = buildReadOnlyBoardHtml(snapshot);
     const timestampToken = getLocalFileTimestamp(new Date(exportedAt));
-    const fileName = `${sanitizeFileStem(registrySession.registryName)}_${timestampToken}_read-only.html`;
+    const scopeSuffix =
+      contentMode === 'both' ? 'read-only' : contentMode === 'risks' ? 'read-only-risks' : 'read-only-decisions';
+    const fileName = `${sanitizeFileStem(registrySession.registryName)}_${timestampToken}_${scopeSuffix}.html`;
     downloadTextFile(html, fileName, 'text/html');
     setReadOnlyExportOpen(false);
     return `Exported a read-only board view as ${fileName} using your local time.`;
@@ -4155,6 +4410,7 @@ export default function App() {
             />
             {view === 'risk' ? (
               <RiskRegisterPage
+                activeProject={activeProject}
                 risks={riskRecords}
                 sharedRiskSubscriptions={activeProjectSharedRiskSubscriptions}
                 sharedRisks={sharedRisks}
@@ -4293,12 +4549,14 @@ export default function App() {
             onClose={() => setReadOnlyExportOpen(false)}
             onConfirm={() => {
               try {
-                const message = handleExportReadOnlyBoard(readOnlyExportProjectIds);
+                const message = handleExportReadOnlyBoard(readOnlyExportProjectIds, readOnlyExportContentMode);
                 window.alert(message);
               } catch (error) {
                 window.alert(error instanceof Error ? error.message : 'Read-only export failed.');
               }
             }}
+            contentMode={readOnlyExportContentMode}
+            onContentModeChange={setReadOnlyExportContentMode}
             onSelectionChange={setReadOnlyExportProjectIds}
             open={readOnlyExportOpen}
             projects={projects}
@@ -6102,16 +6360,20 @@ function ReadOnlyExportModal({
   open,
   projects,
   selectedProjectIds,
+  contentMode,
   activeProjectId,
   onSelectionChange,
+  onContentModeChange,
   onConfirm,
   onClose,
 }: {
   open: boolean;
   projects: Project[];
   selectedProjectIds: string[];
+  contentMode: ReadOnlyExportContentMode;
   activeProjectId: string;
   onSelectionChange: (projectIds: string[]) => void;
+  onContentModeChange: (contentMode: ReadOnlyExportContentMode) => void;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -6197,6 +6459,51 @@ function ReadOnlyExportModal({
               >
                 Clear
               </button>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Content to include</div>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                {[
+                  {
+                    value: 'both',
+                    label: 'Risks and decisions',
+                    description: 'Keep both registers available in the exported review copy.',
+                  },
+                  {
+                    value: 'risks',
+                    label: 'Risks only',
+                    description: 'Hide decision records and open the export directly in the risk register.',
+                  },
+                  {
+                    value: 'decisions',
+                    label: 'Decisions only',
+                    description: 'Hide risk records and open the export directly in the decision register.',
+                  },
+                ].map((option) => {
+                  const selected = contentMode === option.value;
+                  return (
+                    <label
+                      key={option.value}
+                      className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-4 py-3 transition ${
+                        selected ? 'border-primary/30 bg-primary/5' : 'border-slate-200 bg-white hover:bg-slate-100'
+                      }`}
+                    >
+                      <input
+                        checked={selected}
+                        className="mt-1 h-4 w-4 shrink-0 accent-primary"
+                        name="read-only-export-content-mode"
+                        onChange={() => onContentModeChange(option.value as ReadOnlyExportContentMode)}
+                        type="radio"
+                      />
+                      <div>
+                        <div className="font-semibold text-on-surface">{option.label}</div>
+                        <div className="mt-1 text-sm text-on-surface-variant">{option.description}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -6549,6 +6856,7 @@ function SnapshotPage({
 }
 
 function RiskRegisterPage({
+  activeProject,
   risks,
   sharedRiskSubscriptions,
   sharedRisks,
@@ -6564,6 +6872,7 @@ function RiskRegisterPage({
   scoringModel,
   decisions,
 }: {
+  activeProject: Project;
   risks: Risk[];
   sharedRiskSubscriptions: SharedRiskSubscription[];
   sharedRisks: SharedRisk[];
@@ -7204,7 +7513,9 @@ function RiskRegisterPage({
                         }`}
                         onClick={() => onSelectRisk(risk.id)}
                       >
-                        <td className="px-6 py-5 font-mono text-sm font-bold text-primary">{risk.id}</td>
+                        <td className="px-6 py-5 font-mono text-sm font-bold text-primary">
+                          {formatProjectScopedId(activeProject.projectKey, risk.id)}
+                        </td>
                         <td className="px-6 py-5">
                           <div className="space-y-1">
                             <div className="flex flex-wrap items-center gap-2">
@@ -7262,7 +7573,9 @@ function RiskRegisterPage({
 
             <div className="border-t border-slate-200/70 px-6 py-4 text-sm text-on-surface-variant">
               Selected risk:{' '}
-              <span className="font-semibold text-on-surface">{selectedRisk?.id ?? 'None selected'}</span>
+              <span className="font-semibold text-on-surface">
+                {selectedRisk ? formatProjectScopedId(activeProject.projectKey, selectedRisk.id) : 'None selected'}
+              </span>
             </div>
           </>
         )}
@@ -7294,7 +7607,9 @@ function RiskRegisterPage({
                     className="cursor-pointer border-t border-slate-200/60 bg-slate-50/70 text-slate-500 opacity-70 transition hover:opacity-100"
                     onClick={() => onSelectRisk(risk.id)}
                   >
-                    <td className="px-6 py-5 font-mono text-sm font-bold text-slate-500">{risk.id}</td>
+                    <td className="px-6 py-5 font-mono text-sm font-bold text-slate-500">
+                      {formatProjectScopedId(activeProject.projectKey, risk.id)}
+                    </td>
                     <td className="px-6 py-5">
                       <div className="space-y-1">
                         <div className="text-sm font-bold text-slate-600">{risk.title}</div>
@@ -7370,6 +7685,7 @@ function DecisionRegisterPage({
 }) {
   const [statusFilter, setStatusFilter] = useState<'All' | DecisionStatus>('All');
   const [deciderFilter, setDeciderFilter] = useState('All');
+  const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
   const currentDecisions = decisions.filter((decision) => decision.status !== 'Rejected');
   const rejectedDecisions = decisions.filter((decision) => decision.status === 'Rejected');
   const filteredCurrentDecisions = currentDecisions.filter((decision) => {
@@ -7386,13 +7702,15 @@ function DecisionRegisterPage({
   const deciderOptions = Array.from(new Set(currentDecisions.map((decision) => decision.deciders))).sort();
 
   function handleDownloadDecisions() {
-    const headers = ['ID', 'Title', 'Status', 'Deciders', 'Date', 'Linked Risks', 'Summary'];
+    const headers = ['ID', 'Scoped ID', 'Title', 'Status', 'Deciders', 'Roles', 'Updated', 'Linked Risks', 'Summary'];
     const rows = filteredCurrentDecisions.map((decision) => [
       decision.id,
+      formatProjectScopedId(activeProject.projectKey, decision.id),
       decision.title,
       decision.status,
       decision.deciders,
-      decision.date,
+      decision.deciderRoles,
+      getDecisionActivityLabel(decision),
       decision.linkedRisks.map((riskId) => getRiskLabel(risks, riskId)).join(' | '),
       getDecisionPreview(decision),
     ]);
@@ -7457,7 +7775,7 @@ function DecisionRegisterPage({
                   </select>
                 ) : null}
               </th>
-              <th className="whitespace-nowrap px-5 py-4">Date</th>
+              <th className="whitespace-nowrap px-5 py-4">Updated</th>
             </tr>
           </thead>
           <tbody>
@@ -7477,7 +7795,9 @@ function DecisionRegisterPage({
                   }`}
                   onClick={() => onSelectDecision(decision.id)}
                 >
-                  <td className={`whitespace-nowrap px-5 py-5 font-mono text-sm font-bold ${dimmed ? 'text-slate-500' : 'text-primary'}`}>{decision.id}</td>
+                  <td className={`whitespace-nowrap px-5 py-5 font-mono text-sm font-bold ${dimmed ? 'text-slate-500' : 'text-primary'}`}>
+                    {formatProjectScopedId(activeProject.projectKey, decision.id)}
+                  </td>
                   <td className="px-5 py-5">
                     <div className="space-y-0.5">
                       <div className="flex flex-wrap items-center gap-2">
@@ -7494,8 +7814,13 @@ function DecisionRegisterPage({
                   <td className="whitespace-nowrap px-5 py-5">
                     <DecisionStatusBadge status={decision.status} />
                   </td>
-                  <td className="whitespace-nowrap px-5 py-5 text-sm font-medium text-on-surface-variant">{decision.deciders}</td>
-                  <td className="whitespace-nowrap px-5 py-5 text-sm tabular-nums text-on-surface">{decision.date}</td>
+                  <td className="whitespace-nowrap px-5 py-5 text-sm font-medium text-on-surface-variant">
+                    <div>{decision.deciders}</div>
+                    {decision.deciderRoles ? (
+                      <div className="mt-1 text-xs text-slate-400">{decision.deciderRoles}</div>
+                    ) : null}
+                  </td>
+                  <td className="whitespace-nowrap px-5 py-5 text-sm tabular-nums text-on-surface">{getDecisionActivityLabel(decision)}</td>
                 </tr>
               );
             })}
@@ -7548,6 +7873,7 @@ function DecisionRegisterPage({
 
         {selectedDecision ? (
           <DecisionDetailPanel
+            activeProject={activeProject}
             decision={selectedDecision}
             risks={risks}
             onUpdate={(updates) => onUpdateDecision(selectedDecision.id, updates)}
@@ -7564,6 +7890,7 @@ function DecisionRegisterPage({
                       .filter((decision) => decision.sharedDecisionId === selectedDecision.sharedDecisionId)
                       .map((decision) => ({
                         projectId: project.id,
+                        projectKey: project.projectKey,
                         projectName: project.name,
                         decision,
                         isActiveProject: project.id === activeProjectId,
@@ -7588,6 +7915,7 @@ function DecisionRegisterPage({
 }
 
 function DecisionDetailPanel({
+  activeProject,
   decision,
   risks,
   onUpdate,
@@ -7599,6 +7927,7 @@ function DecisionDetailPanel({
   sharedDecision,
   sharedUsages,
 }: {
+  activeProject: Project;
   decision: Decision;
   risks: Risk[];
   onUpdate: (updates: Partial<Decision>) => void;
@@ -7608,7 +7937,7 @@ function DecisionDetailPanel({
   onPublishSharedDecision: () => void;
   onRefreshFromSharedDecision: () => void;
   sharedDecision: SharedDecision | null;
-  sharedUsages: Array<{projectId: string; projectName: string; decision: Decision; isActiveProject: boolean}>;
+  sharedUsages: Array<{projectId: string; projectKey: string; projectName: string; decision: Decision; isActiveProject: boolean}>;
 }) {
   const [editingOutcome, setEditingOutcome] = useState(false);
   const [outcomeDraft, setOutcomeDraft] = useState(decision.outcome);
@@ -7641,7 +7970,9 @@ function DecisionDetailPanel({
       <section className="rounded-[1.75rem] bg-white p-6 shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="font-mono text-[11px] font-bold text-primary">{decision.id}</div>
+            <div className="font-mono text-[11px] font-bold text-primary">
+              {formatProjectScopedId(activeProject.projectKey, decision.id)}
+            </div>
             <EditableText
               className="mt-1 font-headline text-xl font-extrabold leading-snug text-on-surface"
               value={decision.title}
@@ -7695,11 +8026,12 @@ function DecisionDetailPanel({
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <div className="rounded-xl bg-slate-50 px-3 py-2.5">
             <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Status</div>
             <select
               className="w-full bg-transparent text-sm font-semibold text-on-surface outline-none"
+              disabled={decision.statusLocked}
               value={decision.status}
               onChange={(e) => save({status: e.target.value as DecisionStatus}, 'Status updated')}
             >
@@ -7718,14 +8050,48 @@ function DecisionDetailPanel({
             />
           </div>
           <div className="rounded-xl bg-slate-50 px-3 py-2.5">
-            <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Date</div>
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Roles</div>
+            <EditableText
+              className="text-sm font-semibold text-on-surface"
+              value={decision.deciderRoles}
+              placeholder="Approver roles..."
+              onSave={(v) => save({deciderRoles: v}, 'Roles updated')}
+            />
+          </div>
+          <div className="rounded-xl bg-slate-50 px-3 py-2.5">
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Updated</div>
+            <div className="text-sm font-semibold text-on-surface">{getDecisionActivityLabel(decision)}</div>
+          </div>
+        </div>
+        <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">
+          <div className="rounded-xl bg-slate-50 px-3 py-2.5">
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Decision Date</div>
             <EditableText
               className="text-sm font-semibold text-on-surface"
               value={decision.date}
               placeholder="e.g. Apr 09, 2026"
-              onSave={(v) => save({date: v}, 'Date updated')}
+              onSave={(v) => save({date: v}, 'Decision date updated')}
             />
           </div>
+          <label className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 text-sm font-semibold text-on-surface">
+            <div>
+              <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Status Lock</div>
+              <div className="text-sm font-semibold text-on-surface">
+                {decision.statusLocked ? 'Locked until manually unchecked' : 'Unlocked'}
+              </div>
+            </div>
+            <input
+              checked={decision.statusLocked}
+              className="h-4 w-4 accent-primary"
+              onChange={(event) =>
+                save(
+                  {statusLocked: event.target.checked},
+                  event.target.checked ? 'Status locked' : 'Status unlocked',
+                )
+              }
+              type="checkbox"
+            />
+          </label>
         </div>
         {decision.sharedDecisionId ? (
           <div className="mt-4 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4">
@@ -7749,7 +8115,10 @@ function DecisionDetailPanel({
                         {usage.projectName}
                         {usage.isActiveProject ? ' (current project)' : ''}
                       </div>
-                      <div className="text-xs text-on-surface-variant">Status {usage.decision.status}</div>
+                      <div className="text-right text-xs text-on-surface-variant">
+                        <div>Status {usage.decision.status}</div>
+                        <div>{formatProjectScopedId(usage.projectKey, usage.decision.id)}</div>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -8197,6 +8566,7 @@ function CreateDecisionModal({
     title: string;
     status: DecisionStatus;
     deciders: string;
+    deciderRoles: string;
     date: string;
     context: string;
     decisionDrivers: string[];
@@ -8210,6 +8580,7 @@ function CreateDecisionModal({
     title: '',
     status: 'Proposed' as DecisionStatus,
     deciders: '',
+    deciderRoles: '',
     date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
     context: '',
     decisionDrivers: '',
@@ -8223,6 +8594,7 @@ function CreateDecisionModal({
       title: '',
       status: 'Proposed',
       deciders: '',
+      deciderRoles: '',
       date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
       context: '',
       decisionDrivers: '',
@@ -8236,6 +8608,7 @@ function CreateDecisionModal({
       !open &&
       !form.title &&
       !form.deciders &&
+      !form.deciderRoles &&
       !form.context &&
       !form.decisionDrivers &&
       !form.consideredOptions &&
@@ -8248,6 +8621,7 @@ function CreateDecisionModal({
     form.consideredOptions,
     form.context,
     form.deciders,
+    form.deciderRoles,
     form.decisionDrivers,
     form.id,
     form.outcome,
@@ -8350,7 +8724,18 @@ function CreateDecisionModal({
                   onChange={(e) => field('deciders', e.target.value)}
                 />
               </FormField>
-              <FormField label="Date">
+              <FormField label="Decider Roles">
+                <input
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-primary/40"
+                  placeholder="e.g. Chief Engineer, Program Manager"
+                  value={form.deciderRoles}
+                  onChange={(e) => field('deciderRoles', e.target.value)}
+                />
+              </FormField>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <FormField label="Decision Date">
                 <input
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none transition focus:border-primary/40"
                   placeholder="e.g. Apr 11, 2026"
@@ -8418,6 +8803,7 @@ function CreateDecisionModal({
                     title: form.title,
                     status: form.status,
                     deciders: form.deciders,
+                    deciderRoles: form.deciderRoles,
                     date: form.date,
                     context: form.context,
                     decisionDrivers: splitLines(form.decisionDrivers),
@@ -8658,6 +9044,7 @@ function RiskDrawer({
   onOpenSharedRisk: (sharedRiskId: string) => void;
 }) {
   const backdropPressStarted = useRef(false);
+  const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
   const [editingField, setEditingField] = useState<QuickEditFieldName | null>(null);
   const [savedFieldLabel, setSavedFieldLabel] = useState<string | null>(null);
   const [editingStatement, setEditingStatement] = useState(false);
@@ -8982,7 +9369,7 @@ function RiskDrawer({
                 type="button"
                 title="Edit risk ID"
               >
-                <span>{risk.id}</span>
+                <span>{formatProjectScopedId(activeProject.projectKey, risk.id)}</span>
                 <span className="material-symbols-outlined text-[13px] opacity-0 transition group-hover:opacity-100">edit</span>
               </button>
             )}
