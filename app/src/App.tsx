@@ -3805,6 +3805,87 @@ export default function App() {
               lastSeenSharedRiskVersion: sharedRisk.versionNumber,
             }
           : subscription,
+        ),
+    );
+  }
+
+  function handleUnshareRisk(riskId: string) {
+    const localRisk = riskRecords.find((risk) => risk.id === riskId);
+    if (!localRisk?.sharedRiskId) {
+      return;
+    }
+
+    const sharedRiskId = localRisk.sharedRiskId;
+
+    if (localRisk.sharedRiskRole === 'source') {
+      const linkedRisks = projects.flatMap((project) =>
+        project.risks
+          .filter((risk) => risk.sharedRiskId === sharedRiskId && risk.sharedRiskRole === 'linked')
+          .map((risk) => ({
+            projectName: project.name,
+            scopedId: formatProjectScopedId(project.projectKey, risk.id),
+            title: risk.title,
+          })),
+      );
+
+      if (linkedRisks.length > 0) {
+        const listedRisks = linkedRisks
+          .slice(0, 12)
+          .map((risk) => `- ${risk.projectName}: ${risk.scopedId} - ${risk.title}`)
+          .join('\n');
+        const overflowNotice =
+          linkedRisks.length > 12 ? `\n...and ${linkedRisks.length - 12} more linked risk(s).` : '';
+        const confirmed = window.confirm(
+          `Unsharing this source risk will detach ${linkedRisks.length} linked risk(s):\n\n${listedRisks}${overflowNotice}\n\nContinue?`,
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      setSharedRisks((current) => current.filter((sharedRisk) => sharedRisk.id !== sharedRiskId));
+      setSharedRiskSubscriptions((current) =>
+        current.filter((subscription) => subscription.sharedRiskId !== sharedRiskId),
+      );
+      setProjects((current) =>
+        current.map((project) => ({
+          ...project,
+          risks: project.risks.map((risk) =>
+            risk.sharedRiskId === sharedRiskId
+              ? {
+                  ...risk,
+                  sharedRiskId: undefined,
+                  sharedRiskRole: undefined,
+                  sharedParentVersionSeen: null,
+                  sharedReviewStatus: undefined,
+                  sharedOverrideRationale: '',
+                }
+              : risk,
+          ),
+        })),
+      );
+      return;
+    }
+
+    updateActiveProject((project) => ({
+      ...project,
+      risks: project.risks.map((risk) =>
+        risk.id === riskId
+          ? {
+              ...risk,
+              sharedRiskId: undefined,
+              sharedRiskRole: undefined,
+              sharedParentVersionSeen: null,
+              sharedReviewStatus: undefined,
+              sharedOverrideRationale: '',
+            }
+          : risk,
+      ),
+    }));
+    setSharedRiskSubscriptions((current) =>
+      current.filter(
+        (subscription) =>
+          !(subscription.sharedRiskId === sharedRiskId && subscription.projectId === activeProject.id),
       ),
     );
   }
@@ -3928,6 +4009,8 @@ export default function App() {
     decisionDrivers: string[];
     consideredOptions: string[];
     outcome: string;
+    goodConsequences: string[];
+    badConsequences: string[];
   }) {
     const nowIso = new Date().toISOString();
     const next: Decision = buildDecisionRecord({
@@ -3948,8 +4031,8 @@ export default function App() {
       decisionDrivers: input.decisionDrivers,
       consideredOptions: input.consideredOptions,
       outcome: input.outcome.trim(),
-      goodConsequences: [],
-      badConsequences: [],
+      goodConsequences: input.goodConsequences,
+      badConsequences: input.badConsequences,
       moreInfo: '',
       approvalChain: [],
     });
@@ -3994,6 +4077,33 @@ export default function App() {
         decision.id === decisionId ? {...decision, sharedDecisionId} : decision,
       ),
     }));
+  }
+
+  function handleUnshareDecision(decisionId: string) {
+    const localDecision = decisions.find((decision) => decision.id === decisionId);
+    if (!localDecision?.sharedDecisionId) {
+      return;
+    }
+
+    const sharedDecisionId = localDecision.sharedDecisionId;
+    const isSourceProjectDecision = sharedDecisions.some(
+      (sharedDecision) => sharedDecision.id === sharedDecisionId && sharedDecision.sourceProjectId === activeProject.id,
+    );
+
+    if (isSourceProjectDecision) {
+      setSharedDecisions((current) => current.filter((decision) => decision.id !== sharedDecisionId));
+      setProjects((current) =>
+        current.map((project) => ({
+          ...project,
+          decisions: project.decisions.map((decision) =>
+            decision.sharedDecisionId === sharedDecisionId ? {...decision, sharedDecisionId: undefined} : decision,
+          ),
+        })),
+      );
+      return;
+    }
+
+    handleUpdateDecision(decisionId, {sharedDecisionId: undefined});
   }
 
   function handlePublishDecisionToLibrary(decisionId: string) {
@@ -4503,6 +4613,7 @@ export default function App() {
               sharedRiskSubscriptions={sharedRiskSubscriptions}
               activeProjectId={activeProject.id}
               onShareRisk={handleShareRisk}
+              onUnshareRisk={handleUnshareRisk}
               onOpenSharedRisk={handleSharedRiskSelect}
             />
           ) : null}
@@ -7880,6 +7991,7 @@ function DecisionRegisterPage({
             onDelete={() => onDeleteDecision(selectedDecision.id)}
             onShowRisk={onShowRisk}
             onShareDecision={() => onShareDecision(selectedDecision.id)}
+            onUnshareDecision={() => handleUnshareDecision(selectedDecision.id)}
             onPublishSharedDecision={() => onPublishSharedDecision(selectedDecision.id)}
             onRefreshFromSharedDecision={() => onRefreshFromSharedDecision(selectedDecision.id)}
             sharedDecision={sharedDecisions.find((item) => item.id === selectedDecision.sharedDecisionId) ?? null}
@@ -7922,6 +8034,7 @@ function DecisionDetailPanel({
   onDelete,
   onShowRisk,
   onShareDecision,
+  onUnshareDecision,
   onPublishSharedDecision,
   onRefreshFromSharedDecision,
   sharedDecision,
@@ -7934,6 +8047,7 @@ function DecisionDetailPanel({
   onDelete: () => void;
   onShowRisk: (riskId: string) => void;
   onShareDecision: () => void;
+  onUnshareDecision: () => void;
   onPublishSharedDecision: () => void;
   onRefreshFromSharedDecision: () => void;
   sharedDecision: SharedDecision | null;
@@ -8009,6 +8123,13 @@ function DecisionDetailPanel({
                   type="button"
                 >
                   Update Shared
+                </button>
+                <button
+                  className="rounded-full bg-rose-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-rose-700 transition hover:bg-rose-100"
+                  onClick={onUnshareDecision}
+                  type="button"
+                >
+                  Unshare
                 </button>
               </>
             )}
@@ -8311,15 +8432,16 @@ function EditableText({
   }
 
   return (
-    <span
-      className={`group cursor-text rounded-lg px-0.5 transition hover:bg-slate-100 ${className ?? ''}`}
-      onClick={() => setEditing(true)}
-      title="Click to edit"
-    >
-      {value || <span className="text-slate-400">{placeholder}</span>}
-      <span className="ml-1 inline-block opacity-0 transition group-hover:opacity-60">
-        <span className="material-symbols-outlined text-[13px] text-slate-400">edit</span>
-      </span>
+    <span className={`group inline-flex items-start gap-1 rounded-lg px-0.5 ${className ?? ''}`}>
+      <span>{value || <span className="text-slate-400">{placeholder}</span>}</span>
+      <button
+        className="inline-flex rounded-full p-0.5 text-slate-300 opacity-0 transition hover:bg-slate-100 hover:text-slate-600 group-hover:opacity-60"
+        onClick={() => setEditing(true)}
+        title="Edit"
+        type="button"
+      >
+        <span className="material-symbols-outlined text-[13px] text-current">edit</span>
+      </button>
     </span>
   );
 }
@@ -8384,7 +8506,7 @@ function DecisionEditTextarea({
     </div>
   ) : (
     <div className="group relative">
-      <p className="text-sm leading-relaxed text-on-surface">
+      <p className="whitespace-pre-line text-sm leading-relaxed text-on-surface">
         {value || <span className="text-slate-400">{placeholder}</span>}
       </p>
       <button
@@ -8481,19 +8603,9 @@ function EditableDecisionList({
                 </div>
               ) : (
                 <>
-                  <button
-                    className="min-w-0 flex-1 rounded-lg px-1 py-0.5 text-left text-sm text-on-surface transition hover:bg-white/70"
-                    onClick={() => {
-                      if (!onUpdate) {
-                        return;
-                      }
-                      setEditingIndex(index);
-                      setEditDraft(item);
-                    }}
-                    type="button"
-                  >
+                  <div className="min-w-0 flex-1 rounded-lg px-1 py-0.5 text-sm text-on-surface">
                     <span className="block">{item}</span>
-                  </button>
+                  </div>
                   <div className="mt-0.5 flex shrink-0 items-center self-start gap-1">
                     {onUpdate ? (
                       <button
@@ -8550,6 +8662,60 @@ function EditableDecisionList({
   );
 }
 
+function DraftDecisionListEditor({
+  items,
+  placeholder,
+  addLabel,
+  onChange,
+}: {
+  items: string[];
+  placeholder: string;
+  addLabel: string;
+  onChange: (items: string[]) => void;
+}) {
+  const rows = items.length > 0 ? items : [''];
+
+  return (
+    <div className="space-y-2">
+      {rows.map((item, index) => (
+        <div
+          key={`draft-item-${index}`}
+          className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+        >
+          <span className="shrink-0 text-base font-bold text-slate-400">•</span>
+          <input
+            className="flex-1 bg-transparent text-sm text-on-surface outline-none"
+            onChange={(event) => {
+              const nextItems = [...rows];
+              nextItems[index] = event.target.value;
+              onChange(nextItems);
+            }}
+            placeholder={placeholder}
+            value={item}
+          />
+          <button
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 p-0 text-slate-300 ring-1 ring-slate-200 transition hover:text-error"
+            onClick={() => {
+              const nextItems = rows.filter((_, currentIndex) => currentIndex !== index);
+              onChange(nextItems);
+            }}
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[13px]">close</span>
+          </button>
+        </div>
+      ))}
+      <button
+        className="rounded-xl bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-200"
+        onClick={() => onChange([...rows, ''])}
+        type="button"
+      >
+        {addLabel}
+      </button>
+    </div>
+  );
+}
+
 function CreateDecisionModal({
   open,
   existingIds,
@@ -8572,6 +8738,8 @@ function CreateDecisionModal({
     decisionDrivers: string[];
     consideredOptions: string[];
     outcome: string;
+    goodConsequences: string[];
+    badConsequences: string[];
   }) => void;
 }) {
   const backdropPressStarted = useRef(false);
@@ -8583,9 +8751,11 @@ function CreateDecisionModal({
     deciderRoles: '',
     date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
     context: '',
-    decisionDrivers: '',
-    consideredOptions: '',
+    decisionDrivers: [''],
+    consideredOptions: [''],
     outcome: '',
+    goodConsequences: [''],
+    badConsequences: [''],
   });
 
   function resetDecisionDraft() {
@@ -8597,9 +8767,11 @@ function CreateDecisionModal({
       deciderRoles: '',
       date: new Date().toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}),
       context: '',
-      decisionDrivers: '',
-      consideredOptions: '',
+      decisionDrivers: [''],
+      consideredOptions: [''],
       outcome: '',
+      goodConsequences: [''],
+      badConsequences: [''],
     });
   }
 
@@ -8610,9 +8782,11 @@ function CreateDecisionModal({
       !form.deciders &&
       !form.deciderRoles &&
       !form.context &&
-      !form.decisionDrivers &&
-      !form.consideredOptions &&
+      form.decisionDrivers.every((item) => !item.trim()) &&
+      form.consideredOptions.every((item) => !item.trim()) &&
       !form.outcome &&
+      form.goodConsequences.every((item) => !item.trim()) &&
+      form.badConsequences.every((item) => !item.trim()) &&
       form.id !== nextDecisionId
     ) {
       setForm((current) => ({...current, id: nextDecisionId}));
@@ -8623,7 +8797,9 @@ function CreateDecisionModal({
     form.deciders,
     form.deciderRoles,
     form.decisionDrivers,
+    form.goodConsequences,
     form.id,
+    form.badConsequences,
     form.outcome,
     form.title,
     nextDecisionId,
@@ -8640,8 +8816,15 @@ function CreateDecisionModal({
   ].filter(Boolean) as string[];
   const isValid = missingFields.length === 0 && !duplicateId;
 
-  function field(key: keyof typeof form, value: string) {
+  function field(key: 'id' | 'title' | 'status' | 'deciders' | 'deciderRoles' | 'date' | 'context' | 'outcome', value: string) {
     setForm((f) => ({...f, [key]: value}));
+  }
+
+  function listField(
+    key: 'decisionDrivers' | 'consideredOptions' | 'goodConsequences' | 'badConsequences',
+    value: string[],
+  ) {
+    setForm((current) => ({...current, [key]: value}));
   }
 
   return (
@@ -8755,20 +8938,20 @@ function CreateDecisionModal({
             </FormField>
 
             <FormField label="Decision Drivers">
-              <textarea
-                className="min-h-24 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm leading-relaxed outline-none transition focus:border-primary/40"
-                placeholder="Enter one driver per line"
-                value={form.decisionDrivers}
-                onChange={(e) => field('decisionDrivers', e.target.value)}
+              <DraftDecisionListEditor
+                addLabel="Add Driver"
+                items={form.decisionDrivers}
+                onChange={(value) => listField('decisionDrivers', value)}
+                placeholder="Add a decision driver…"
               />
             </FormField>
 
             <FormField label="Considered Options">
-              <textarea
-                className="min-h-24 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm leading-relaxed outline-none transition focus:border-primary/40"
-                placeholder="Enter one option per line"
-                value={form.consideredOptions}
-                onChange={(e) => field('consideredOptions', e.target.value)}
+              <DraftDecisionListEditor
+                addLabel="Add Option"
+                items={form.consideredOptions}
+                onChange={(value) => listField('consideredOptions', value)}
+                placeholder="Add an option…"
               />
             </FormField>
 
@@ -8780,6 +8963,26 @@ function CreateDecisionModal({
                 onChange={(e) => field('outcome', e.target.value)}
               />
             </FormField>
+
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <FormField label="Positive Consequences">
+                <DraftDecisionListEditor
+                  addLabel="Add Positive"
+                  items={form.goodConsequences}
+                  onChange={(value) => listField('goodConsequences', value)}
+                  placeholder="Add a positive consequence…"
+                />
+              </FormField>
+
+              <FormField label="Negative Consequences">
+                <DraftDecisionListEditor
+                  addLabel="Add Negative"
+                  items={form.badConsequences}
+                  onChange={(value) => listField('badConsequences', value)}
+                  placeholder="Add a negative consequence…"
+                />
+              </FormField>
+            </div>
           </div>
 
           <div className="border-t border-slate-200 px-6 py-4">
@@ -8806,9 +9009,11 @@ function CreateDecisionModal({
                     deciderRoles: form.deciderRoles,
                     date: form.date,
                     context: form.context,
-                    decisionDrivers: splitLines(form.decisionDrivers),
-                    consideredOptions: splitLines(form.consideredOptions),
+                    decisionDrivers: form.decisionDrivers.map((item) => item.trim()).filter(Boolean),
+                    consideredOptions: form.consideredOptions.map((item) => item.trim()).filter(Boolean),
                     outcome: form.outcome,
+                    goodConsequences: form.goodConsequences.map((item) => item.trim()).filter(Boolean),
+                    badConsequences: form.badConsequences.map((item) => item.trim()).filter(Boolean),
                   });
                   resetDecisionDraft();
                 }}
@@ -9023,6 +9228,7 @@ function RiskDrawer({
   sharedRiskSubscriptions,
   activeProjectId,
   onShareRisk,
+  onUnshareRisk,
   onOpenSharedRisk,
 }: {
   open: boolean;
@@ -9041,6 +9247,7 @@ function RiskDrawer({
   sharedRiskSubscriptions: SharedRiskSubscription[];
   activeProjectId: string;
   onShareRisk: (riskId: string) => void;
+  onUnshareRisk: (riskId: string) => void;
   onOpenSharedRisk: (sharedRiskId: string) => void;
 }) {
   const backdropPressStarted = useRef(false);
@@ -9464,7 +9671,9 @@ function RiskDrawer({
         <div className="flex flex-wrap gap-2">
           {!risk.sharedRiskId ? (
             <DrawerAction icon="share" label="Share" onClick={() => onShareRisk(risk.id)} />
-          ) : null}
+          ) : (
+            <DrawerAction icon="link_off" label="Unshare" destructive onClick={() => onUnshareRisk(risk.id)} />
+          )}
           <DrawerAction destructive icon="delete" label="Delete" onClick={() => setConfirmDelete(true)} />
         </div>
 
@@ -10512,26 +10721,17 @@ function RiskStatementField({
   onCancel: () => void;
 }) {
   return (
-    <div
-      className={`rounded-2xl transition ${editable ? '' : 'cursor-pointer hover:bg-slate-50'}`}
-      onClick={() => {
-        if (!editable) {
-          onEdit();
-        }
-      }}
-      role={!editable ? 'button' : undefined}
-      tabIndex={!editable ? 0 : undefined}
-      onKeyDown={(event) => {
-        if (!editable && (event.key === 'Enter' || event.key === ' ')) {
-          event.preventDefault();
-          onEdit();
-        }
-      }}
-    >
+    <div className="rounded-2xl transition">
       <div className="mb-1 flex items-center justify-between gap-2">
         <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
         {!editable ? (
-          <span className="material-symbols-outlined text-[14px] text-slate-400">edit</span>
+          <button
+            className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            onClick={onEdit}
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[14px]">edit</span>
+          </button>
         ) : null}
       </div>
       {editable ? (
@@ -10615,26 +10815,17 @@ function MitigationPlanField({
   }
 
   return (
-    <div
-      className={`rounded-2xl transition ${editable ? '' : 'cursor-pointer hover:bg-slate-50'}`}
-      onClick={() => {
-        if (!editable) {
-          onEdit();
-        }
-      }}
-      role={!editable ? 'button' : undefined}
-      tabIndex={!editable ? 0 : undefined}
-      onKeyDown={(event) => {
-        if (!editable && (event.key === 'Enter' || event.key === ' ')) {
-          event.preventDefault();
-          onEdit();
-        }
-      }}
-    >
+    <div className="rounded-2xl transition">
       <div className="mb-1 flex items-center justify-between gap-2">
         <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
         {!editable ? (
-          <span className="material-symbols-outlined text-[14px] text-slate-400">edit</span>
+          <button
+            className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            onClick={onEdit}
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[14px]">edit</span>
+          </button>
         ) : null}
       </div>
       {editable ? (
@@ -10694,29 +10885,20 @@ function QuickEditSelect({
   const selectedOption = normalizedOptions.find((option) => option.value === value);
 
   return (
-    <div
-      className="group rounded-xl bg-slate-50 px-4 py-3 transition hover:bg-slate-100/90"
-      onClick={() => {
-        if (!editing) {
-          onBeginEdit(field);
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(event) => {
-        if ((event.key === 'Enter' || event.key === ' ') && !editing) {
-          event.preventDefault();
-          onBeginEdit(field);
-        }
-      }}
-    >
+    <div className="group rounded-xl bg-slate-50 px-4 py-3 transition hover:bg-slate-100/90">
       <div className="mb-1 flex items-center justify-between gap-2">
         <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
         <div className="flex items-center gap-2">
           {labelAction}
-          <span className="material-symbols-outlined text-[14px] text-slate-400 opacity-0 transition group-hover:opacity-100">
-            edit
-          </span>
+          {!editing ? (
+            <button
+              className="rounded-full p-1 text-slate-400 opacity-0 transition hover:bg-white hover:text-slate-700 group-hover:opacity-100"
+              onClick={() => onBeginEdit(field)}
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[14px]">edit</span>
+            </button>
+          ) : null}
         </div>
       </div>
       {editing ? (
@@ -10781,27 +10963,18 @@ function QuickEditOwner({
   }, [value]);
 
   return (
-    <div
-      className="group rounded-xl bg-slate-50 px-4 py-3 transition hover:bg-slate-100/90"
-      onClick={() => {
-        if (!editing) {
-          onBeginEdit(field);
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(event) => {
-        if ((event.key === 'Enter' || event.key === ' ') && !editing) {
-          event.preventDefault();
-          onBeginEdit(field);
-        }
-      }}
-    >
+    <div className="group rounded-xl bg-slate-50 px-4 py-3 transition hover:bg-slate-100/90">
       <div className="mb-1 flex items-center justify-between gap-2">
         <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
-        <span className="material-symbols-outlined text-[14px] text-slate-400 opacity-0 transition group-hover:opacity-100">
-          edit
-        </span>
+        {!editing ? (
+          <button
+            className="rounded-full p-1 text-slate-400 opacity-0 transition hover:bg-white hover:text-slate-700 group-hover:opacity-100"
+            onClick={() => onBeginEdit(field)}
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[14px]">edit</span>
+          </button>
+        ) : null}
       </div>
       {editing ? (
         <div className="space-y-2">
@@ -10865,27 +11038,18 @@ function QuickEditDate({
   const editing = activeField === field;
 
   return (
-    <div
-      className="group rounded-xl bg-slate-50 px-4 py-3 transition hover:bg-slate-100/90"
-      onClick={() => {
-        if (!editing) {
-          onBeginEdit(field);
-        }
-      }}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(event) => {
-        if ((event.key === 'Enter' || event.key === ' ') && !editing) {
-          event.preventDefault();
-          onBeginEdit(field);
-        }
-      }}
-    >
+    <div className="group rounded-xl bg-slate-50 px-4 py-3 transition hover:bg-slate-100/90">
       <div className="mb-1 flex items-center justify-between gap-2">
         <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
-        <span className="material-symbols-outlined text-[14px] text-slate-400 opacity-0 transition group-hover:opacity-100">
-          edit_calendar
-        </span>
+        {!editing ? (
+          <button
+            className="rounded-full p-1 text-slate-400 opacity-0 transition hover:bg-white hover:text-slate-700 group-hover:opacity-100"
+            onClick={() => onBeginEdit(field)}
+            type="button"
+          >
+            <span className="material-symbols-outlined text-[14px]">edit_calendar</span>
+          </button>
+        ) : null}
       </div>
       {editing ? (
         <input
