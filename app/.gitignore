@@ -1,6 +1,10 @@
 node_modules/
 build/
-dist/
+dist/*
+!dist/index.html
+!dist/demo-project-snapshot.json
+!dist/assets/
+!dist/assets/*
 coverage/
 .DS_Store
 *.log
