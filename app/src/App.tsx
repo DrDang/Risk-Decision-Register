@@ -2,12 +2,20 @@ import {type ChangeEvent, type MouseEvent as ReactMouseEvent, type ReactNode, ty
 
 type View = 'risk' | 'decision' | 'analytics' | 'library' | 'snapshot' | 'settings';
 
-type RiskStatus = 'Pending' | 'Active' | 'Monitoring' | 'Rejected' | 'Closed';
+type RiskStatus = 'Pending' | 'Active' | 'Monitoring' | 'Rejected' | 'Closed' | 'Converted to Issue';
 type RiskSeverity = 'High' | 'Medium' | 'Low';
 type SharedRiskRole = 'source' | 'linked';
 type SharedRiskReviewStatus = 'current' | 'review_required' | 'reviewed_no_change' | 'updated_after_review';
 type SharedRiskSubscriptionState = 'watching' | 'linked' | 'review_required' | 'not_applicable';
 type HistoryEntry = {label: string; meta: string; at?: string};
+type RiskComment = {id: string; body: string; author: string; createdAt: string; updatedAt: string};
+type MitigationAction = {
+  id: string;
+  title: string;
+  owner: string;
+  dueDate: string;
+  status: 'Not Started' | 'In Progress' | 'Done' | 'Blocked';
+};
 
 type Risk = {
   id: string;
@@ -28,15 +36,20 @@ type Risk = {
   likelihood: number;
   impact: number;
   residualRating: string;
+  residualLikelihood: number;
+  residualImpact: number;
+  residualRiskRating: string;
   responseType: 'Mitigate' | 'Accept' | 'Transfer' | 'Avoid';
   project: string;
   lastUpdated: string;
   dueDate: string;
   mitigation: string;
+  mitigationActions: MitigationAction[];
   contingency: string;
   linkedDecision: string;
   attachments: number;
-  comments: number;
+  comments: RiskComment[];
+  legacyCommentCount: number;
   createdBy: string;
   internalOnly: boolean;
   history: HistoryEntry[];
@@ -771,7 +784,7 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
                     </td>
                     <td><span class="\${statusChipClass(risk.status)}">\${escapeHtml(risk.status)}</span></td>
                     <td>\${escapeHtml(risk.owner || 'Not assigned')}</td>
-                    <td>\${escapeHtml(String(risk.likelihood))} × \${escapeHtml(String(risk.impact))} = \${escapeHtml(risk.residualRating)}</td>
+                    <td>\${escapeHtml(String(risk.likelihood))} × \${escapeHtml(String(risk.impact))} = \${escapeHtml(String(risk.likelihood * risk.impact))}</td>
                     <td>\${escapeHtml(risk.responseType || 'Not defined')}</td>
                     <td>\${escapeHtml(formatDateTime(risk.lastUpdated))}</td>
                   </tr>
@@ -833,7 +846,7 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
               </div>
               <div class="detail-card">
                 <div class="label">Assessment</div>
-                <div class="value">Likelihood \${escapeHtml(String(risk.likelihood))} · Impact \${escapeHtml(String(risk.impact))} · \${escapeHtml(risk.residualRating)}</div>
+                <div class="value">Likelihood \${escapeHtml(String(risk.likelihood))} · Impact \${escapeHtml(String(risk.impact))} · Score \${escapeHtml(String(risk.likelihood * risk.impact))}</div>
               </div>
               <div class="detail-card wide">
                 <div class="label">Risk Statement</div>
@@ -1397,7 +1410,9 @@ type QuickEditFieldName =
   | 'linkedDecision'
   | 'responseType'
   | 'likelihood'
-  | 'impact';
+  | 'impact'
+  | 'residualLikelihood'
+  | 'residualImpact';
 
 type HeatmapCell = {
   likelihood: number;
@@ -1622,7 +1637,7 @@ function filterBurndownPoints(points: RiskBurndownPoint[], timeframe: BurndownTi
 }
 
 function getDefaultBurndownRiskIds(risks: Risk[]) {
-  const activeRisks = risks.filter((risk) => risk.status !== 'Closed' && risk.status !== 'Rejected');
+  const activeRisks = risks.filter((risk) => !isRetiredRiskStatus(risk.status));
   const prioritized = [...activeRisks].sort((left, right) => {
     const scoreDifference = right.likelihood * right.impact - left.likelihood * left.impact;
     if (scoreDifference !== 0) {
@@ -1694,6 +1709,85 @@ function getResidualRating(likelihood: number, impact: number) {
     severity,
     label: `${severity} (${score})`,
   };
+}
+
+function getRiskScoreLabel(likelihood: number, impact: number) {
+  const rating = getResidualRating(likelihood, impact);
+  return `${rating.score} · ${rating.severity}`;
+}
+
+function getRiskCommentCount(risk: Pick<Risk, 'comments' | 'legacyCommentCount'>) {
+  return risk.comments.length + risk.legacyCommentCount;
+}
+
+function isRetiredRiskStatus(status: RiskStatus) {
+  return status === 'Closed' || status === 'Rejected' || status === 'Converted to Issue';
+}
+
+function normalizeRiskComments(value: unknown): RiskComment[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry, index) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+
+      const record = entry as Partial<RiskComment>;
+      const body = typeof record.body === 'string' ? record.body : '';
+      if (!body.trim()) {
+        return null;
+      }
+
+      const timestamp =
+        normalizeLegacyTimestamp(record.updatedAt) ??
+        normalizeLegacyTimestamp(record.createdAt) ??
+        new Date().toISOString();
+
+      return {
+        id: typeof record.id === 'string' && record.id ? record.id : `comment-${index + 1}`,
+        body,
+        author: typeof record.author === 'string' && record.author ? record.author : 'Local edit',
+        createdAt: normalizeLegacyTimestamp(record.createdAt) ?? timestamp,
+        updatedAt: timestamp,
+      };
+    })
+    .filter((entry): entry is RiskComment => Boolean(entry));
+}
+
+function normalizeMitigationActions(value: unknown): MitigationAction[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry, index) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+
+      const record = entry as Partial<MitigationAction>;
+      const title = typeof record.title === 'string' ? record.title : '';
+      if (!title.trim()) {
+        return null;
+      }
+
+      const status: MitigationAction['status'] =
+        record.status === 'In Progress' || record.status === 'Done' || record.status === 'Blocked'
+          ? record.status
+          : 'Not Started';
+
+      return {
+        id: typeof record.id === 'string' && record.id ? record.id : `mitigation-action-${index + 1}`,
+        title,
+        owner: typeof record.owner === 'string' ? record.owner : '',
+        dueDate: typeof record.dueDate === 'string' ? record.dueDate : '',
+        status,
+      };
+    })
+    .filter((entry): entry is MitigationAction => Boolean(entry));
 }
 
 function normalizeRiskStatement(value: string) {
@@ -2317,10 +2411,20 @@ function normalizeRiskRecord(
   const likelihood = typeof input.likelihood === 'number' ? input.likelihood : 3;
   const impact = typeof input.impact === 'number' ? input.impact : 3;
   const residual = getResidualRating(likelihood, impact);
+  const residualLikelihood = typeof input.residualLikelihood === 'number' ? input.residualLikelihood : likelihood;
+  const residualImpact = typeof input.residualImpact === 'number' ? input.residualImpact : impact;
+  const projectedResidual = getResidualRating(residualLikelihood, residualImpact);
   const trigger = typeof input.trigger === 'string' ? input.trigger : '';
   const consequence = typeof input.consequence === 'string' ? input.consequence : '';
   const inferredLastUpdated = inferRiskLastUpdated(input, context);
   const normalizedHistory = buildNormalizedHistoryEntries(input.history, inferredLastUpdated, context);
+  const comments = normalizeRiskComments(input.comments);
+  const legacyCommentCount =
+    typeof input.legacyCommentCount === 'number'
+      ? input.legacyCommentCount
+      : typeof input.comments === 'number'
+        ? input.comments
+        : 0;
 
   return {
     id: typeof input.id === 'string' ? input.id : formatRiskSequence(1),
@@ -2350,7 +2454,8 @@ function normalizeRiskRecord(
       input.status === 'Active' ||
       input.status === 'Monitoring' ||
       input.status === 'Rejected' ||
-      input.status === 'Closed'
+      input.status === 'Closed' ||
+      input.status === 'Converted to Issue'
         ? input.status
         : 'Pending',
     severity:
@@ -2361,6 +2466,10 @@ function normalizeRiskRecord(
     likelihood,
     impact,
     residualRating: typeof input.residualRating === 'string' ? input.residualRating : residual.label,
+    residualLikelihood,
+    residualImpact,
+    residualRiskRating:
+      typeof input.residualRiskRating === 'string' ? input.residualRiskRating : projectedResidual.label,
     responseType:
       input.responseType === 'Mitigate' ||
       input.responseType === 'Accept' ||
@@ -2372,10 +2481,12 @@ function normalizeRiskRecord(
     lastUpdated: inferredLastUpdated,
     dueDate: typeof input.dueDate === 'string' ? input.dueDate : '',
     mitigation: typeof input.mitigation === 'string' ? input.mitigation : '',
+    mitigationActions: normalizeMitigationActions(input.mitigationActions),
     contingency: typeof input.contingency === 'string' ? input.contingency : '',
     linkedDecision: typeof input.linkedDecision === 'string' ? input.linkedDecision : 'None',
     attachments: typeof input.attachments === 'number' ? input.attachments : 0,
-    comments: typeof input.comments === 'number' ? input.comments : 0,
+    comments,
+    legacyCommentCount,
     createdBy: typeof input.createdBy === 'string' ? input.createdBy : 'Local edit',
     internalOnly: typeof input.internalOnly === 'boolean' ? input.internalOnly : false,
     history: normalizedHistory,
@@ -2437,7 +2548,8 @@ function normalizeSharedRiskRecord(input: Partial<SharedRisk> & Record<string, u
       input.status === 'Active' ||
       input.status === 'Monitoring' ||
       input.status === 'Rejected' ||
-      input.status === 'Closed'
+      input.status === 'Closed' ||
+      input.status === 'Converted to Issue'
         ? input.status
         : 'Pending',
     owner: typeof input.owner === 'string' ? input.owner : '',
@@ -3477,6 +3589,13 @@ export default function App() {
           nextRisk.residualRating = residual.label;
         }
 
+        if (updates.residualLikelihood !== undefined || updates.residualImpact !== undefined) {
+          nextRisk.residualRiskRating = getResidualRating(
+            nextRisk.residualLikelihood,
+            nextRisk.residualImpact,
+          ).label;
+        }
+
         return {
           ...nextRisk,
           lastUpdated: new Date().toISOString(),
@@ -3503,6 +3622,12 @@ export default function App() {
       const residual = getResidualRating(nextRisk.likelihood, nextRisk.impact);
       nextRisk.severity = residual.severity;
       nextRisk.residualRating = residual.label;
+    }
+    if (updates.residualLikelihood !== undefined || updates.residualImpact !== undefined) {
+      nextRisk.residualRiskRating = getResidualRating(
+        nextRisk.residualLikelihood,
+        nextRisk.residualImpact,
+      ).label;
     }
 
     const updatedSharedRisk = buildSharedRiskFromSourceRisk(nextRisk, currentSharedRisk);
@@ -3686,16 +3811,21 @@ export default function App() {
       likelihood: 3,
       impact: translatedImpact,
       residualRating: residual.label,
+      residualLikelihood: 3,
+      residualImpact: translatedImpact,
+      residualRiskRating: residual.label,
       responseType: 'Mitigate',
       project: activeProject.name,
       lastUpdated: new Date().toISOString(),
       
       dueDate: '',
       mitigation: 'Define the mitigation plan for this shared risk in this project context.',
+      mitigationActions: [],
       contingency: '',
       linkedDecision: 'None',
       attachments: 0,
-      comments: 0,
+      comments: [],
+      legacyCommentCount: 0,
       createdBy: 'Shared library import',
       internalOnly: false,
       history: [
@@ -3972,6 +4102,9 @@ export default function App() {
       likelihood: input.likelihood,
       impact: input.impact,
       residualRating: residual.label,
+      residualLikelihood: input.likelihood,
+      residualImpact: input.impact,
+      residualRiskRating: residual.label,
       responseType: input.responseType,
       project: activeProject.name,
       lastUpdated: new Date().toISOString(),
@@ -3980,10 +4113,12 @@ export default function App() {
         residual.severity === 'Low'
           ? 'Mitigation plans are not required for low risks. Contingency planning is not applicable at this risk level.'
           : 'Define the mitigation plan for this risk.',
+      mitigationActions: [],
       contingency: '',
       linkedDecision: input.linkedDecision,
       attachments: 0,
-      comments: 0,
+      comments: [],
+      legacyCommentCount: 0,
       createdBy: 'Local edit',
       internalOnly: false,
       history: [createHistoryEntry('Risk created', 'Local edit')],
@@ -4550,6 +4685,7 @@ export default function App() {
                   setDrawerOpen(true);
                 }}
                 onShareDecision={handleShareDecision}
+                onUnshareDecision={handleUnshareDecision}
                 onPublishSharedDecision={handlePublishDecisionToLibrary}
                 onRefreshFromSharedDecision={handleRefreshDecisionFromLibrary}
                 sharedDecisions={sharedDecisions}
@@ -5467,7 +5603,7 @@ function CreateRiskModal({
                     onChange={(event) => setForm((current) => ({...current, status: event.target.value as RiskStatus}))}
                     value={form.status}
                   >
-                    {['Pending', 'Active', 'Monitoring', 'Rejected'].map((option) => (
+                    {(['Pending', 'Active', 'Monitoring', 'Rejected'] as RiskStatus[]).map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>
@@ -5765,8 +5901,8 @@ function TrendsAnalyticsPage({
   const burndownChartRef = useRef<SVGSVGElement | null>(null);
 
   const burndownRiskOptions = [...risks].sort((left, right) => {
-    const leftRetired = left.status === 'Closed' || left.status === 'Rejected';
-    const rightRetired = right.status === 'Closed' || right.status === 'Rejected';
+    const leftRetired = isRetiredRiskStatus(left.status);
+    const rightRetired = isRetiredRiskStatus(right.status);
     if (leftRetired !== rightRetired) {
       return leftRetired ? 1 : -1;
     }
@@ -6033,7 +6169,7 @@ function TrendsAnalyticsPage({
                         <div className="space-y-1">
                           {burndownRiskOptions.map((risk) => {
                             const checked = selectedBurndownRiskIds.includes(risk.id);
-                            const retired = risk.status === 'Closed' || risk.status === 'Rejected';
+                            const retired = isRetiredRiskStatus(risk.status);
                             return (
                               <label
                                 key={risk.id}
@@ -6376,7 +6512,7 @@ function SharedLibraryPage({
                               </span>
                             </div>
                             <div className="text-xs text-on-surface-variant">
-                              Likelihood {usage.risk.likelihood} · Impact {usage.risk.impact} · {usage.risk.residualRating}
+                              Likelihood {usage.risk.likelihood} · Impact {usage.risk.impact} · Score {usage.risk.likelihood * usage.risk.impact}
                             </div>
                           </div>
                           <div className="mt-1 flex items-center justify-between gap-3 text-xs text-on-surface-variant">
@@ -7027,7 +7163,7 @@ function RiskRegisterPage({
   }
 
   const openRisks = risks
-    .filter((risk) => risk.status !== 'Closed' && risk.status !== 'Rejected')
+    .filter((risk) => !isRetiredRiskStatus(risk.status))
     .sort((left, right) => {
       const severityOrder = {High: 0, Medium: 1, Low: 2};
       return severityOrder[left.severity] - severityOrder[right.severity];
@@ -7047,7 +7183,7 @@ function RiskRegisterPage({
 
     return true;
   });
-  const retiredRisks = risks.filter((risk) => risk.status === 'Closed' || risk.status === 'Rejected');
+  const retiredRisks = risks.filter((risk) => isRetiredRiskStatus(risk.status));
   const projectSharedRisks = sharedRiskSubscriptions
     .map((subscription) => {
       const sharedRisk = sharedRisks.find((risk) => risk.id === subscription.sharedRiskId);
@@ -7568,7 +7704,7 @@ function RiskRegisterPage({
                         onChange={(event) => setStatusFilter(event.target.value as 'All' | RiskStatus)}
                         value={statusFilter}
                       >
-                        {['All', 'Pending', 'Active', 'Monitoring'].map((option) => (
+                        {(['All', 'Pending', 'Active', 'Monitoring'] as Array<'All' | RiskStatus>).map((option) => (
                           <option key={option} value={option}>
                             {option}
                           </option>
@@ -7774,6 +7910,7 @@ function DecisionRegisterPage({
   onDeleteDecision,
   onShowRisk,
   onShareDecision,
+  onUnshareDecision,
   onPublishSharedDecision,
   onRefreshFromSharedDecision,
   sharedDecisions,
@@ -7788,6 +7925,7 @@ function DecisionRegisterPage({
   onDeleteDecision: (decisionId: string) => void;
   onShowRisk: (riskId: string) => void;
   onShareDecision: (decisionId: string) => void;
+  onUnshareDecision: (decisionId: string) => void;
   onPublishSharedDecision: (decisionId: string) => void;
   onRefreshFromSharedDecision: (decisionId: string) => void;
   sharedDecisions: SharedDecision[];
@@ -7991,7 +8129,7 @@ function DecisionRegisterPage({
             onDelete={() => onDeleteDecision(selectedDecision.id)}
             onShowRisk={onShowRisk}
             onShareDecision={() => onShareDecision(selectedDecision.id)}
-            onUnshareDecision={() => handleUnshareDecision(selectedDecision.id)}
+            onUnshareDecision={() => onUnshareDecision(selectedDecision.id)}
             onPublishSharedDecision={() => onPublishSharedDecision(selectedDecision.id)}
             onRefreshFromSharedDecision={() => onRefreshFromSharedDecision(selectedDecision.id)}
             sharedDecision={sharedDecisions.find((item) => item.id === selectedDecision.sharedDecisionId) ?? null}
@@ -9258,11 +9396,23 @@ function RiskDrawer({
   const [editingMitigation, setEditingMitigation] = useState(false);
   const [pendingScoreChange, setPendingScoreChange] = useState<{field: 'likelihood' | 'impact'; value: number} | null>(null);
   const [scoreChangeReason, setScoreChangeReason] = useState('');
+  const [pendingClosureStatus, setPendingClosureStatus] = useState<RiskStatus | null>(null);
+  const [closureReason, setClosureReason] = useState('');
+  const [commentDraft, setCommentDraft] = useState('');
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [commentEditDraft, setCommentEditDraft] = useState('');
+  const [actionDraft, setActionDraft] = useState({title: '', owner: '', dueDate: ''});
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editingRiskId, setEditingRiskId] = useState(false);
   const [riskIdDraft, setRiskIdDraft] = useState(risk.id);
   const [riskIdError, setRiskIdError] = useState('');
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [projectedResidualOpen, setProjectedResidualOpen] = useState(false);
+  const [mitigationActionsOpen, setMitigationActionsOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [recordDetailsOpen, setRecordDetailsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [sharedRiskDetailsOpen, setSharedRiskDetailsOpen] = useState(false);
   const [draftNarrative, setDraftNarrative] = useState({
     trigger: risk.trigger,
     consequence: risk.consequence,
@@ -9276,11 +9426,23 @@ function RiskDrawer({
     setEditingMitigation(false);
     setPendingScoreChange(null);
     setScoreChangeReason('');
+    setPendingClosureStatus(null);
+    setClosureReason('');
+    setCommentDraft('');
+    setEditingCommentId(null);
+    setCommentEditDraft('');
+    setActionDraft({title: '', owner: '', dueDate: ''});
     setConfirmDelete(false);
     setEditingRiskId(false);
     setRiskIdDraft(risk.id);
     setRiskIdError('');
     setHistoryExpanded(false);
+    setProjectedResidualOpen(false);
+    setMitigationActionsOpen(false);
+    setCommentsOpen(false);
+    setRecordDetailsOpen(false);
+    setHistoryOpen(false);
+    setSharedRiskDetailsOpen(false);
     setDraftNarrative({
       trigger: risk.trigger,
       consequence: risk.consequence,
@@ -9337,7 +9499,9 @@ function RiskDrawer({
     setEditingField(null);
 
     const normalizedValue =
-      field === 'likelihood' || field === 'impact' ? Number(value) : value;
+      field === 'likelihood' || field === 'impact' || field === 'residualLikelihood' || field === 'residualImpact'
+        ? Number(value)
+        : value;
 
     if (risk[field] === normalizedValue) {
       return;
@@ -9349,6 +9513,12 @@ function RiskDrawer({
       return;
     }
 
+    if (field === 'status' && isRetiredRiskStatus(normalizedValue as RiskStatus)) {
+      setPendingClosureStatus(normalizedValue as RiskStatus);
+      setClosureReason('');
+      return;
+    }
+
     const fieldLabels: Record<QuickEditFieldName, string> = {
       owner: 'Owner updated',
       dueDate: 'Due date updated',
@@ -9357,6 +9527,8 @@ function RiskDrawer({
       responseType: 'Response updated',
       likelihood: 'Likelihood updated',
       impact: 'Impact updated',
+      residualLikelihood: 'Projected residual likelihood updated',
+      residualImpact: 'Projected residual impact updated',
     };
 
     onUpdateRisk(risk.id, {[field]: normalizedValue} as Partial<Risk>, fieldLabels[field]);
@@ -9384,6 +9556,29 @@ function RiskDrawer({
     setSavedFieldLabel(`${pendingScoreChange.field === 'likelihood' ? 'Likelihood' : 'Impact'} updated`);
     setPendingScoreChange(null);
     setScoreChangeReason('');
+  }
+
+  function confirmRiskClosure() {
+    if (!pendingClosureStatus || !closureReason.trim()) {
+      return;
+    }
+
+    const statusLabel =
+      pendingClosureStatus === 'Converted to Issue'
+        ? 'Risk converted to issue'
+        : pendingClosureStatus === 'Rejected'
+          ? 'Risk rejected'
+          : 'Risk closed';
+
+    onUpdateRisk(
+      risk.id,
+      {status: pendingClosureStatus},
+      `${statusLabel}\nRationale: ${closureReason.trim()}`,
+    );
+    setSavedFieldLabel(statusLabel);
+    setPendingClosureStatus(null);
+    setClosureReason('');
+    setConfirmDelete(false);
   }
 
   function resetNarrativeDraft() {
@@ -9423,6 +9618,108 @@ function RiskDrawer({
     );
     setEditingMitigation(false);
     setSavedFieldLabel('Mitigation plan saved');
+  }
+
+  function addMitigationAction() {
+    if (!actionDraft.title.trim()) {
+      return;
+    }
+
+    const nextActions: MitigationAction[] = [
+      ...risk.mitigationActions,
+      {
+        id: `mitigation-action-${Date.now()}`,
+        title: actionDraft.title.trim(),
+        owner: actionDraft.owner.trim(),
+        dueDate: actionDraft.dueDate,
+        status: 'Not Started',
+      },
+    ];
+
+    onUpdateRisk(risk.id, {mitigationActions: nextActions}, 'Mitigation action added');
+    setActionDraft({title: '', owner: '', dueDate: ''});
+    setSavedFieldLabel('Mitigation action added');
+  }
+
+  function updateMitigationAction(actionId: string, updates: Partial<MitigationAction>) {
+    onUpdateRisk(
+      risk.id,
+      {
+        mitigationActions: risk.mitigationActions.map((action) =>
+          action.id === actionId ? {...action, ...updates} : action,
+        ),
+      },
+      'Mitigation action updated',
+    );
+    setSavedFieldLabel('Mitigation action updated');
+  }
+
+  function deleteMitigationAction(actionId: string) {
+    onUpdateRisk(
+      risk.id,
+      {mitigationActions: risk.mitigationActions.filter((action) => action.id !== actionId)},
+      'Mitigation action removed',
+    );
+    setSavedFieldLabel('Mitigation action removed');
+  }
+
+  function addComment() {
+    if (!commentDraft.trim()) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const nextComments: RiskComment[] = [
+      {
+        id: `comment-${Date.now()}`,
+        body: commentDraft.trim(),
+        author: 'Local edit',
+        createdAt: now,
+        updatedAt: now,
+      },
+      ...risk.comments,
+    ];
+
+    onUpdateRisk(risk.id, {comments: nextComments}, 'Comment added');
+    setCommentDraft('');
+    setSavedFieldLabel('Comment added');
+  }
+
+  function beginEditComment(comment: RiskComment) {
+    setEditingCommentId(comment.id);
+    setCommentEditDraft(comment.body);
+  }
+
+  function saveCommentEdit(commentId: string) {
+    if (!commentEditDraft.trim()) {
+      return;
+    }
+
+    onUpdateRisk(
+      risk.id,
+      {
+        comments: risk.comments.map((comment) =>
+          comment.id === commentId
+            ? {...comment, body: commentEditDraft.trim(), updatedAt: new Date().toISOString()}
+            : comment,
+        ),
+      },
+      'Comment updated',
+    );
+    setEditingCommentId(null);
+    setCommentEditDraft('');
+    setSavedFieldLabel('Comment updated');
+  }
+
+  function deleteComment(commentId: string) {
+    onUpdateRisk(
+      risk.id,
+      {comments: risk.comments.filter((comment) => comment.id !== commentId)},
+      'Comment deleted',
+    );
+    setEditingCommentId(null);
+    setCommentEditDraft('');
+    setSavedFieldLabel('Comment deleted');
   }
 
   const mitigationRequired = risk.severity !== 'Low';
@@ -9516,6 +9813,56 @@ function RiskDrawer({
                 onClick={() => {
                   setPendingScoreChange(null);
                   setScoreChangeReason('');
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {pendingClosureStatus ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/30 px-5">
+          <div className="w-full max-w-md rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-[0_24px_60px_rgba(42,52,57,0.22)]">
+            <div className="mb-3 flex items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                <span className="material-symbols-outlined text-[22px]">lock</span>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">Closure Rationale Required</div>
+                <div className="mt-1 text-base font-bold text-on-surface">
+                  Explain why this risk is moving to {pendingClosureStatus.toLowerCase()}
+                </div>
+              </div>
+            </div>
+
+            <div className="mb-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface-variant">
+              Retired risks leave the active register, so the rationale is recorded in history for audit and future review.
+            </div>
+
+            <textarea
+              autoFocus
+              className="min-h-28 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/30 focus:shadow-[0_0_0_4px_rgba(79,94,126,0.1)]"
+              onChange={(event) => setClosureReason(event.target.value)}
+              placeholder="Example: Mitigation completed, no open exposure remains, and owner accepted retirement on Apr 27, 2026."
+              value={closureReason}
+            />
+
+            <div className="mt-4 flex gap-2">
+              <button
+                className="rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={!closureReason.trim()}
+                onClick={confirmRiskClosure}
+                type="button"
+              >
+                Save Status
+              </button>
+              <button
+                className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-700 transition hover:bg-slate-200"
+                onClick={() => {
+                  setPendingClosureStatus(null);
+                  setClosureReason('');
                 }}
                 type="button"
               >
@@ -9622,7 +9969,7 @@ function RiskDrawer({
             activeField={editingField}
             field="status"
             label="Status"
-            options={['Pending', 'Active', 'Monitoring', 'Rejected', 'Closed']}
+            options={['Pending', 'Active', 'Monitoring', 'Rejected', 'Closed', 'Converted to Issue']}
             value={risk.status}
             onBeginEdit={setEditingField}
             onSave={saveQuickField}
@@ -9679,13 +10026,13 @@ function RiskDrawer({
 
         {risk.sharedRiskId ? (
           <div className="rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
-                {risk.sharedRiskRole === 'source' ? 'Published Shared Risk' : 'Linked To Shared Risk'} {risk.sharedRiskId}
+                {risk.sharedRiskRole === 'source' ? 'Shared source' : 'Linked shared risk'} {risk.sharedRiskId}
               </span>
               <span className="rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
                 {risk.sharedRiskRole === 'source'
-                  ? `Subscribed in ${sharedRiskUsages.length} downstream project${sharedRiskUsages.length === 1 ? '' : 's'}`
+                  ? `${sharedRiskUsages.length} subscriber${sharedRiskUsages.length === 1 ? '' : 's'}`
                   : `Parent version ${risk.sharedParentVersionSeen ?? sharedRiskRecord?.versionNumber ?? 1}`}
               </span>
               {risk.sharedReviewStatus === 'review_required' ? (
@@ -9704,11 +10051,22 @@ function RiskDrawer({
                 </span>
               ) : null}
             </div>
-          <div className="text-sm leading-relaxed text-on-surface-variant">
-              {risk.sharedRiskRole === 'source'
-                ? 'This project owns the canonical shared risk. Edits made here update the upstream shared artifact and mark downstream subscribers for review when meaningful shared fields change.'
-                : 'This is a project-owned local linked risk. The parent shared risk remains read-only upstream context, and local ownership, scoring, status, and mitigation here stay under this project’s control.'}
+            <div className="mt-3 flex items-start justify-between gap-3 rounded-xl bg-white px-4 py-3">
+              <div className="text-sm leading-relaxed text-on-surface-variant">
+                {risk.sharedRiskRole === 'source'
+                  ? 'Edits here update the shared source record and notify subscribers when review is needed.'
+                  : 'This project owns local status, scoring, and response; the parent shared risk stays upstream.'}
+              </div>
+              <button
+                className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-primary transition hover:bg-primary/10"
+                onClick={() => setSharedRiskDetailsOpen((current) => !current)}
+                type="button"
+              >
+                {sharedRiskDetailsOpen ? 'Hide' : 'Details'}
+              </button>
             </div>
+            {sharedRiskDetailsOpen ? (
+              <div className="mt-3 space-y-3">
             {risk.sharedRiskRole === 'linked' && sharedRiskRecord ? (
               <div className="mt-3">
                 <button
@@ -9723,7 +10081,7 @@ function RiskDrawer({
             ) : null}
             {suggestedLocalImpact != null ? (
               <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-on-surface-variant">
-                Suggested local impact from shared profile:
+                Shared profile suggests impact
                 {' '}
                 <span className="font-semibold text-on-surface">
                   {suggestedLocalImpact} - {getScoreDefinition(scoringModel.impact, suggestedLocalImpact)?.label ?? suggestedLocalImpact}
@@ -9731,7 +10089,7 @@ function RiskDrawer({
                 {suggestedLocalImpact !== risk.impact ? (
                   <span className="text-amber-800">
                     {' '}
-                    This project currently uses impact {risk.impact}, so the local assessment differs from the shared translation suggestion.
+                    but this risk uses impact {risk.impact}. Review if that difference is intentional.
                   </span>
                 ) : (
                   <span>
@@ -9765,6 +10123,12 @@ function RiskDrawer({
                 </div>
               ))}
             </div>
+              </div>
+            ) : suggestedLocalImpact != null && suggestedLocalImpact !== risk.impact ? (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-900">
+                Shared profile suggests impact {suggestedLocalImpact}; this risk uses impact {risk.impact}.
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -9778,9 +10142,8 @@ function RiskDrawer({
               <button
                 className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-700 transition hover:bg-slate-200"
                 onClick={() => {
-                  onUpdateRisk(risk.id, {status: 'Closed'}, 'Risk closed instead of deleted');
-                  setSavedFieldLabel('Risk closed');
-                  setConfirmDelete(false);
+                  setPendingClosureStatus('Closed');
+                  setClosureReason('Risk closed instead of deleted.');
                 }}
                 type="button"
               >
@@ -9828,7 +10191,7 @@ function RiskDrawer({
                 onBeginEdit={setEditingField}
                 onSave={saveQuickField}
               />
-              <DrawerMeta label="Residual rating" value={risk.residualRating} />
+              <DrawerMeta label="Risk score" value={`${risk.likelihood} x ${risk.impact} = ${getRiskScoreLabel(risk.likelihood, risk.impact)}`} />
             </div>
           </div>
           <RiskStatementField
@@ -9873,6 +10236,57 @@ function RiskDrawer({
             value={draftNarrative.mitigation}
             viewValue={risk.mitigation}
           />
+          <CollapsibleDrawerSection
+            open={projectedResidualOpen}
+            summary={`${risk.residualLikelihood} x ${risk.residualImpact} = ${getRiskScoreLabel(risk.residualLikelihood, risk.residualImpact)}`}
+            title="Projected Residual Risk"
+            onToggle={() => setProjectedResidualOpen((current) => !current)}
+          >
+            <div className="rounded-2xl bg-surface-container-low p-4">
+              <div className="mb-3 text-sm leading-relaxed text-on-surface-variant">
+                Set the risk score expected after the mitigation plan is complete. This does not change the current risk score.
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <QuickEditSelect
+                  activeField={editingField}
+                  field="residualLikelihood"
+                  label="Residual likelihood"
+                  options={toScoreSelectOptions(scoringModel.likelihood)}
+                  value={String(risk.residualLikelihood)}
+                  onBeginEdit={setEditingField}
+                  onSave={saveQuickField}
+                />
+                <QuickEditSelect
+                  activeField={editingField}
+                  field="residualImpact"
+                  label="Residual impact"
+                  options={toScoreSelectOptions(scoringModel.impact)}
+                  value={String(risk.residualImpact)}
+                  onBeginEdit={setEditingField}
+                  onSave={saveQuickField}
+                />
+                <DrawerMeta
+                  label="Projected residual risk"
+                  value={`${risk.residualLikelihood} x ${risk.residualImpact} = ${getRiskScoreLabel(risk.residualLikelihood, risk.residualImpact)}`}
+                />
+              </div>
+            </div>
+          </CollapsibleDrawerSection>
+          <CollapsibleDrawerSection
+            open={mitigationActionsOpen}
+            summary={`${risk.mitigationActions.length} action${risk.mitigationActions.length === 1 ? '' : 's'}`}
+            title="Mitigation Actions"
+            onToggle={() => setMitigationActionsOpen((current) => !current)}
+          >
+            <MitigationActionsEditor
+              actions={risk.mitigationActions}
+              draft={actionDraft}
+              onAdd={addMitigationAction}
+              onChangeDraft={setActionDraft}
+              onDelete={deleteMitigationAction}
+              onUpdate={updateMitigationAction}
+            />
+          </CollapsibleDrawerSection>
           <div className="grid grid-cols-2 gap-4">
             <QuickEditDate
               activeField={editingField}
@@ -9897,18 +10311,52 @@ function RiskDrawer({
               onSave={saveQuickField}
             />
             <DrawerMeta label="Attachments" value={`${risk.attachments}`} />
-            <DrawerMeta label="Comments" value={`${risk.comments}`} />
+            <DrawerMeta label="Comments" value={`${getRiskCommentCount(risk)}`} />
           </div>
+          <CollapsibleDrawerSection
+            open={commentsOpen}
+            summary={`${getRiskCommentCount(risk)} comment${getRiskCommentCount(risk) === 1 ? '' : 's'}`}
+            title="Comments"
+            onToggle={() => setCommentsOpen((current) => !current)}
+          >
+            <RiskCommentsEditor
+              comments={risk.comments}
+              draft={commentDraft}
+              editingCommentId={editingCommentId}
+              editDraft={commentEditDraft}
+              legacyCommentCount={risk.legacyCommentCount}
+              onAdd={addComment}
+              onBeginEdit={beginEditComment}
+              onCancelEdit={() => {
+                setEditingCommentId(null);
+                setCommentEditDraft('');
+              }}
+              onChangeDraft={setCommentDraft}
+              onChangeEditDraft={setCommentEditDraft}
+              onDelete={deleteComment}
+              onSaveEdit={saveCommentEdit}
+            />
+          </CollapsibleDrawerSection>
         </DrawerSection>
 
-        <DrawerSection title="Record Details">
+        <CollapsibleDrawerSection
+          open={recordDetailsOpen}
+          summary={`Last updated ${formatHistoryTimestamp(risk.lastUpdated)}`}
+          title="Record Details"
+          onToggle={() => setRecordDetailsOpen((current) => !current)}
+        >
           <div className="grid grid-cols-2 gap-4">
             <DrawerMeta label="Created by" value={risk.createdBy} />
             <DrawerMeta label="Last updated" value={formatHistoryTimestamp(risk.lastUpdated)} />
           </div>
-        </DrawerSection>
+        </CollapsibleDrawerSection>
 
-        <DrawerSection title="History">
+        <CollapsibleDrawerSection
+          open={historyOpen}
+          summary={`${risk.history.length} entr${risk.history.length === 1 ? 'y' : 'ies'}`}
+          title="History"
+          onToggle={() => setHistoryOpen((current) => !current)}
+        >
           {risk.history.length > 2 ? (
             <div className="mb-3 flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-4 py-3">
               <div className="text-sm text-on-surface-variant">
@@ -9934,7 +10382,7 @@ function RiskDrawer({
               </div>
             ))}
           </div>
-        </DrawerSection>
+        </CollapsibleDrawerSection>
       </div>
 
       </aside>
@@ -10611,6 +11059,8 @@ function RiskStatusBadge({status}: {status: RiskStatus}) {
         ? 'bg-sky-100 text-sky-800'
         : status === 'Rejected'
           ? 'bg-rose-100 text-rose-800'
+          : status === 'Converted to Issue'
+            ? 'bg-orange-100 text-orange-800'
         : 'bg-slate-200 text-slate-700';
 
   return <Badge className={classes}>{status}</Badge>;
@@ -10669,6 +11119,44 @@ function DrawerSection({
         {action}
       </div>
       {children}
+    </section>
+  );
+}
+
+function CollapsibleDrawerSection({
+  title,
+  summary,
+  open,
+  children,
+  onToggle,
+}: {
+  title: string;
+  summary?: string;
+  open: boolean;
+  children: ReactNode;
+  onToggle: () => void;
+}) {
+  return (
+    <section className="space-y-4">
+      <button
+        className="group flex w-full items-center justify-between gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-left transition hover:bg-slate-100/90"
+        onClick={onToggle}
+        type="button"
+      >
+        <div className="min-w-0">
+          <div className="flex items-center gap-3">
+            <span className="h-[2px] w-4 bg-primary" />
+            <h3 className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">{title}</h3>
+          </div>
+          {summary ? (
+            <div className="mt-1 truncate pl-7 text-sm font-semibold text-on-surface">{summary}</div>
+          ) : null}
+        </div>
+        <span className="material-symbols-outlined text-[20px] text-slate-400 transition group-hover:text-slate-700">
+          {open ? 'expand_less' : 'expand_more'}
+        </span>
+      </button>
+      {open ? children : null}
     </section>
   );
 }
@@ -10857,6 +11345,220 @@ function MitigationPlanField({
           {viewValue.trim() ? viewValue : 'Mitigation plan not yet defined.'}
         </p>
       )}
+    </div>
+  );
+}
+
+function MitigationActionsEditor({
+  actions,
+  draft,
+  onChangeDraft,
+  onAdd,
+  onUpdate,
+  onDelete,
+}: {
+  actions: MitigationAction[];
+  draft: {title: string; owner: string; dueDate: string};
+  onChangeDraft: (draft: {title: string; owner: string; dueDate: string}) => void;
+  onAdd: () => void;
+  onUpdate: (actionId: string, updates: Partial<MitigationAction>) => void;
+  onDelete: (actionId: string) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Mitigation Actions</div>
+          <div className="mt-1 text-xs leading-relaxed text-on-surface-variant">
+            Track the actual work that makes the mitigation plan credible.
+          </div>
+        </div>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
+          {actions.length}
+        </span>
+      </div>
+
+      <div className="space-y-3">
+        {actions.length === 0 ? (
+          <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface-variant">
+            No mitigation actions yet. Add specific actions when ownership, due dates, or completion tracking matters.
+          </div>
+        ) : (
+          actions.map((action) => (
+            <div key={action.id} className="rounded-xl bg-slate-50 px-4 py-3">
+              <input
+                className="w-full rounded-lg border border-transparent bg-white px-3 py-2 text-sm font-semibold text-on-surface outline-none transition focus:border-primary/25"
+                onBlur={(event) => onUpdate(action.id, {title: event.target.value.trim() || action.title})}
+                defaultValue={action.title}
+              />
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <input
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                  onBlur={(event) => onUpdate(action.id, {owner: event.target.value.trim()})}
+                  defaultValue={action.owner}
+                  placeholder="Owner"
+                />
+                <input
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                  onChange={(event) => onUpdate(action.id, {dueDate: event.target.value})}
+                  type="date"
+                  value={action.dueDate}
+                />
+                <select
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                  onChange={(event) => onUpdate(action.id, {status: event.target.value as MitigationAction['status']})}
+                  value={action.status}
+                >
+                  {(['Not Started', 'In Progress', 'Done', 'Blocked'] as MitigationAction['status'][]).map((status) => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                className="mt-2 rounded-full bg-rose-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-rose-700 transition hover:bg-rose-100"
+                onClick={() => onDelete(action.id)}
+                type="button"
+              >
+                Delete Action
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3">
+        <input
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-on-surface outline-none focus:border-primary/25"
+          onChange={(event) => onChangeDraft({...draft, title: event.target.value})}
+          placeholder="New mitigation action"
+          value={draft.title}
+        />
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <input
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+            onChange={(event) => onChangeDraft({...draft, owner: event.target.value})}
+            placeholder="Owner"
+            value={draft.owner}
+          />
+          <input
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+            onChange={(event) => onChangeDraft({...draft, dueDate: event.target.value})}
+            type="date"
+            value={draft.dueDate}
+          />
+        </div>
+        <button
+          className="mt-3 rounded-full bg-primary px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-primary-dim disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!draft.title.trim()}
+          onClick={onAdd}
+          type="button"
+        >
+          Add Action
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RiskCommentsEditor({
+  comments,
+  legacyCommentCount,
+  draft,
+  editingCommentId,
+  editDraft,
+  onChangeDraft,
+  onAdd,
+  onBeginEdit,
+  onChangeEditDraft,
+  onSaveEdit,
+  onCancelEdit,
+  onDelete,
+}: {
+  comments: RiskComment[];
+  legacyCommentCount: number;
+  draft: string;
+  editingCommentId: string | null;
+  editDraft: string;
+  onChangeDraft: (value: string) => void;
+  onAdd: () => void;
+  onBeginEdit: (comment: RiskComment) => void;
+  onChangeEditDraft: (value: string) => void;
+  onSaveEdit: (commentId: string) => void;
+  onCancelEdit: () => void;
+  onDelete: (commentId: string) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      {legacyCommentCount > 0 ? (
+        <div className="mb-3 rounded-xl bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-900">
+          This imported record had {legacyCommentCount} legacy comment{legacyCommentCount === 1 ? '' : 's'} without stored text. New comments added here can be edited or deleted.
+        </div>
+      ) : null}
+
+      <textarea
+        className="min-h-20 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:bg-white"
+        onChange={(event) => onChangeDraft(event.target.value)}
+        placeholder="Add a comment, rationale, or follow-up note"
+        value={draft}
+      />
+      <button
+        className="mt-2 rounded-full bg-primary px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-primary-dim disabled:cursor-not-allowed disabled:opacity-40"
+        disabled={!draft.trim()}
+        onClick={onAdd}
+        type="button"
+      >
+        Add Comment
+      </button>
+
+      <div className="mt-4 space-y-3">
+        {comments.length === 0 ? (
+          <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface-variant">
+            No editable comments yet.
+          </div>
+        ) : (
+          comments.map((comment) => (
+            <div key={comment.id} className="rounded-xl bg-slate-50 px-4 py-3">
+              {editingCommentId === comment.id ? (
+                <div>
+                  <textarea
+                    className="min-h-20 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-on-surface outline-none focus:border-primary/25"
+                    onChange={(event) => onChangeEditDraft(event.target.value)}
+                    value={editDraft}
+                  />
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      className="rounded-full bg-primary px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white"
+                      disabled={!editDraft.trim()}
+                      onClick={() => onSaveEdit(comment.id)}
+                      type="button"
+                    >
+                      Save
+                    </button>
+                    <button
+                      className="rounded-full bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600"
+                      onClick={onCancelEdit}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="whitespace-pre-line text-sm leading-relaxed text-on-surface">{comment.body}</p>
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-on-surface-variant">
+                    <span>{comment.author} · {formatHistoryTimestamp(comment.updatedAt)}</span>
+                    <span className="flex gap-2">
+                      <button className="font-bold text-primary" onClick={() => onBeginEdit(comment)} type="button">Edit</button>
+                      <button className="font-bold text-rose-700" onClick={() => onDelete(comment.id)} type="button">Delete</button>
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }
