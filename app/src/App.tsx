@@ -47,7 +47,6 @@ type Risk = {
   mitigationActions: MitigationAction[];
   contingency: string;
   linkedDecision: string;
-  attachments: number;
   comments: RiskComment[];
   legacyCommentCount: number;
   createdBy: string;
@@ -627,7 +626,7 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
         <section class="content-grid">
           <div class="panel">
             <div class="panel-title">
-              <div>
+              <div className="min-w-0 flex-1">
                 <h2 id="tableTitle">Current Risks</h2>
                 <p id="tableSubtitle"></p>
               </div>
@@ -867,10 +866,6 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
               <div class="detail-card">
                 <div class="label">Response</div>
                 <div class="value">\${escapeHtml(risk.responseType || 'Not defined')}</div>
-              </div>
-              <div class="detail-card">
-                <div class="label">Due Date</div>
-                <div class="value">\${escapeHtml(formatDateTime(risk.dueDate))}</div>
               </div>
               <div class="detail-card">
                 <div class="label">Linked Decision</div>
@@ -1405,7 +1400,6 @@ const initialProjects: Project[] = [
 
 type QuickEditFieldName =
   | 'owner'
-  | 'dueDate'
   | 'status'
   | 'linkedDecision'
   | 'responseType'
@@ -1530,16 +1524,23 @@ function buildRiskBurndownTimeline(risk: Risk): RiskBurndownPoint[] {
 
   scoreChanges.forEach(({entry, parsed}) => {
     const afterChangeScore = workingLikelihood * workingImpact;
-    pointsDescending.push({
-      at: normalizeBurndownTimestamp(entry.at, normalizedLastUpdated),
-      likelihood: workingLikelihood,
-      impact: workingImpact,
-      score: afterChangeScore,
-      severity: getSeverityFromAssessment(workingLikelihood, workingImpact),
-      label: `${parsed.field === 'likelihood' ? 'Likelihood' : 'Impact'} updated`,
-      rationale: parsed.rationale,
-      source: parsed.field,
-    });
+    const beforeChangeScore =
+      parsed.field === 'likelihood'
+        ? parsed.previousValue * workingImpact
+        : workingLikelihood * parsed.previousValue;
+
+    if (afterChangeScore !== beforeChangeScore) {
+      pointsDescending.push({
+        at: normalizeBurndownTimestamp(entry.at, normalizedLastUpdated),
+        likelihood: workingLikelihood,
+        impact: workingImpact,
+        score: afterChangeScore,
+        severity: getSeverityFromAssessment(workingLikelihood, workingImpact),
+        label: `${parsed.field === 'likelihood' ? 'Likelihood' : 'Impact'} updated`,
+        rationale: parsed.rationale,
+        source: parsed.field,
+      });
+    }
 
     if (parsed.field === 'likelihood') {
       workingLikelihood = parsed.previousValue;
@@ -1566,33 +1567,6 @@ function buildRiskBurndownTimeline(risk: Risk): RiskBurndownPoint[] {
     },
     ...pointsDescending.reverse(),
   ];
-
-  const latestPoint = ascendingPoints[ascendingPoints.length - 1];
-  if (latestPoint && latestPoint.at !== normalizedLastUpdated) {
-    ascendingPoints.push({
-      at: normalizedLastUpdated,
-      likelihood: risk.likelihood,
-      impact: risk.impact,
-      score: risk.likelihood * risk.impact,
-      severity: risk.severity,
-      label: 'Current score',
-      rationale: '',
-      source: 'current',
-    });
-  }
-
-  if (ascendingPoints.length === 1 && ascendingPoints[0].at !== normalizedLastUpdated) {
-    ascendingPoints.push({
-      at: normalizedLastUpdated,
-      likelihood: risk.likelihood,
-      impact: risk.impact,
-      score: risk.likelihood * risk.impact,
-      severity: risk.severity,
-      label: 'Current score',
-      rationale: '',
-      source: 'current',
-    });
-  }
 
   return ascendingPoints.sort((left, right) => new Date(left.at).getTime() - new Date(right.at).getTime());
 }
@@ -1716,8 +1690,8 @@ function getRiskScoreLabel(likelihood: number, impact: number) {
   return `${rating.score} · ${rating.severity}`;
 }
 
-function getRiskCommentCount(risk: Pick<Risk, 'comments' | 'legacyCommentCount'>) {
-  return risk.comments.length + risk.legacyCommentCount;
+function getRiskCommentCount(risk: Pick<Risk, 'comments'>) {
+  return risk.comments.length;
 }
 
 function isRetiredRiskStatus(status: RiskStatus) {
@@ -2419,12 +2393,6 @@ function normalizeRiskRecord(
   const inferredLastUpdated = inferRiskLastUpdated(input, context);
   const normalizedHistory = buildNormalizedHistoryEntries(input.history, inferredLastUpdated, context);
   const comments = normalizeRiskComments(input.comments);
-  const legacyCommentCount =
-    typeof input.legacyCommentCount === 'number'
-      ? input.legacyCommentCount
-      : typeof input.comments === 'number'
-        ? input.comments
-        : 0;
 
   return {
     id: typeof input.id === 'string' ? input.id : formatRiskSequence(1),
@@ -2484,9 +2452,8 @@ function normalizeRiskRecord(
     mitigationActions: normalizeMitigationActions(input.mitigationActions),
     contingency: typeof input.contingency === 'string' ? input.contingency : '',
     linkedDecision: typeof input.linkedDecision === 'string' ? input.linkedDecision : 'None',
-    attachments: typeof input.attachments === 'number' ? input.attachments : 0,
     comments,
-    legacyCommentCount,
+    legacyCommentCount: 0,
     createdBy: typeof input.createdBy === 'string' ? input.createdBy : 'Local edit',
     internalOnly: typeof input.internalOnly === 'boolean' ? input.internalOnly : false,
     history: normalizedHistory,
@@ -3420,6 +3387,26 @@ export default function App() {
     setCreateRiskOpen(false);
   }
 
+  function handleUpdateProject(projectId: string, updates: Pick<Project, 'name' | 'description'>) {
+    const nextName = updates.name.trim();
+    if (!nextName) {
+      return;
+    }
+
+    setProjects((prev) =>
+      prev.map((project) =>
+        project.id === projectId
+          ? {
+              ...project,
+              name: nextName,
+              description: updates.description.trim(),
+              risks: project.risks.map((risk) => ({...risk, project: nextName})),
+            }
+          : project,
+      ),
+    );
+  }
+
   function handleDeleteProject(projectId: string) {
     setProjects((prev) => {
       const remainingProjects = prev.filter((project) => project.id !== projectId);
@@ -3823,7 +3810,6 @@ export default function App() {
       mitigationActions: [],
       contingency: '',
       linkedDecision: 'None',
-      attachments: 0,
       comments: [],
       legacyCommentCount: 0,
       createdBy: 'Shared library import',
@@ -4084,7 +4070,6 @@ export default function App() {
     trigger: string;
     consequence: string;
     responseType: Risk['responseType'];
-    dueDate: string;
     status: RiskStatus;
   }) {
     const residual = getResidualRating(input.likelihood, input.impact);
@@ -4108,7 +4093,7 @@ export default function App() {
       responseType: input.responseType,
       project: activeProject.name,
       lastUpdated: new Date().toISOString(),
-      dueDate: input.dueDate,
+      dueDate: '',
       mitigation:
         residual.severity === 'Low'
           ? 'Mitigation plans are not required for low risks. Contingency planning is not applicable at this risk level.'
@@ -4116,7 +4101,6 @@ export default function App() {
       mitigationActions: [],
       contingency: '',
       linkedDecision: input.linkedDecision,
-      attachments: 0,
       comments: [],
       legacyCommentCount: 0,
       createdBy: 'Local edit',
@@ -4621,6 +4605,7 @@ export default function App() {
           onDeleteProject={handleDeleteProject}
           onSwitchProject={handleSwitchProject}
           onCreateProject={handleCreateProject}
+          onUpdateProject={handleUpdateProject}
         />
         <div className="flex min-h-screen flex-1 pl-64">
           <main className={`flex min-h-screen flex-1 flex-col ${view === 'risk' && drawerOpen ? 'pr-[29rem]' : ''}`}>
@@ -4824,6 +4809,7 @@ function Sidebar({
   onDeleteProject,
   onSwitchProject,
   onCreateProject,
+  onUpdateProject,
 }: {
   boardLoaded: boolean;
   view: View;
@@ -4833,12 +4819,16 @@ function Sidebar({
   onDeleteProject: (projectId: string) => void;
   onSwitchProject: (projectId: string) => void;
   onCreateProject: (name: string, description: string) => void;
+  onUpdateProject: (projectId: string, updates: Pick<Project, 'name' | 'description'>) => void;
 }) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [confirmDeleteProjectId, setConfirmDeleteProjectId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [editName, setEditName] = useState('');
+  const [editDesc, setEditDesc] = useState('');
 
   const navItems: {id: View; label: string; icon: string}[] = [
     {id: 'risk', label: 'Risk Register', icon: 'security'},
@@ -4852,6 +4842,7 @@ function Sidebar({
   function handleOpenPanel() {
     setPanelOpen(true);
     setCreating(false);
+    setEditingProjectId(null);
     setConfirmDeleteProjectId(null);
     setNewName('');
     setNewDesc('');
@@ -4860,6 +4851,7 @@ function Sidebar({
   function handleClosePanel() {
     setPanelOpen(false);
     setCreating(false);
+    setEditingProjectId(null);
     setConfirmDeleteProjectId(null);
   }
 
@@ -4867,6 +4859,20 @@ function Sidebar({
     if (!newName.trim()) return;
     onCreateProject(newName, newDesc);
     handleClosePanel();
+  }
+
+  function beginEditProject(project: Project) {
+    setCreating(false);
+    setConfirmDeleteProjectId(null);
+    setEditingProjectId(project.id);
+    setEditName(project.name);
+    setEditDesc(project.description);
+  }
+
+  function handleSubmitEdit() {
+    if (!editingProjectId || !editName.trim()) return;
+    onUpdateProject(editingProjectId, {name: editName, description: editDesc});
+    setEditingProjectId(null);
   }
 
   return (
@@ -5000,31 +5006,71 @@ function Sidebar({
                     >
                       {project.name.charAt(0).toUpperCase()}
                     </div>
-                    <button
-                      className="min-w-0 flex-1 text-left"
-                      onClick={() => {
-                        onSwitchProject(project.id);
-                        handleClosePanel();
-                      }}
-                      type="button"
-                    >
-                      <div className={`flex items-center gap-2 text-sm font-semibold ${isActive ? 'text-primary' : 'text-slate-900'}`}>
-                        <span className="truncate">{project.name}</span>
-                        {isActive ? (
-                          <span className="material-symbols-outlined filled text-[14px]">check_circle</span>
-                        ) : null}
-                      </div>
-                      {project.description ? (
-                        <div className="mt-0.5 line-clamp-2 text-xs text-slate-500">
-                          {project.description}
+                    {editingProjectId === project.id ? (
+                      <div className="min-w-0 flex-1">
+                        <input
+                          autoFocus
+                          className="mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-on-surface outline-none transition focus:border-primary/40 focus:shadow-[0_0_0_3px_rgba(79,94,126,0.08)]"
+                          maxLength={60}
+                          onChange={(event) => setEditName(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') handleSubmitEdit();
+                            if (event.key === 'Escape') setEditingProjectId(null);
+                          }}
+                          value={editName}
+                        />
+                        <textarea
+                          className="mb-2 w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-on-surface outline-none transition focus:border-primary/40 focus:shadow-[0_0_0_3px_rgba(79,94,126,0.08)]"
+                          maxLength={200}
+                          onChange={(event) => setEditDesc(event.target.value)}
+                          rows={2}
+                          value={editDesc}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            className="rounded-full bg-primary px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-primary-dim disabled:opacity-40"
+                            disabled={!editName.trim()}
+                            onClick={handleSubmitEdit}
+                            type="button"
+                          >
+                            Save
+                          </button>
+                          <button
+                            className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-200"
+                            onClick={() => setEditingProjectId(null)}
+                            type="button"
+                          >
+                            Cancel
+                          </button>
                         </div>
-                      ) : null}
-                      <div className="mt-1 flex items-center gap-2 text-[10px] font-semibold text-slate-400">
-                        <span>{project.risks.length} risk{project.risks.length !== 1 ? 's' : ''}</span>
-                        <span>·</span>
-                        <span>{project.decisions.length} decision{project.decisions.length !== 1 ? 's' : ''}</span>
                       </div>
-                    </button>
+                    ) : (
+                      <button
+                        className="min-w-0 flex-1 text-left"
+                        onClick={() => {
+                          onSwitchProject(project.id);
+                          handleClosePanel();
+                        }}
+                        type="button"
+                      >
+                        <div className={`flex items-center gap-2 text-sm font-semibold ${isActive ? 'text-primary' : 'text-slate-900'}`}>
+                          <span className="truncate">{project.name}</span>
+                          {isActive ? (
+                            <span className="material-symbols-outlined filled text-[14px]">check_circle</span>
+                          ) : null}
+                        </div>
+                        {project.description ? (
+                          <div className="mt-0.5 line-clamp-2 text-xs text-slate-500">
+                            {project.description}
+                          </div>
+                        ) : null}
+                        <div className="mt-1 flex items-center gap-2 text-[10px] font-semibold text-slate-400">
+                          <span>{project.risks.length} risk{project.risks.length !== 1 ? 's' : ''}</span>
+                          <span>·</span>
+                          <span>{project.decisions.length} decision{project.decisions.length !== 1 ? 's' : ''}</span>
+                        </div>
+                      </button>
+                    )}
                     <div className="shrink-0">
                       {confirmDeleteProjectId === project.id ? (
                         <div className="flex items-center gap-1">
@@ -5047,15 +5093,26 @@ function Sidebar({
                           </button>
                         </div>
                       ) : (
-                        <button
-                          aria-label={`Delete ${project.name}`}
-                          className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-100 hover:text-error"
-                          onClick={() => setConfirmDeleteProjectId(project.id)}
-                          title={`Delete ${project.name}`}
-                          type="button"
-                        >
-                          <span className="material-symbols-outlined text-[16px]">delete</span>
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            aria-label={`Edit ${project.name}`}
+                            className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-100 hover:text-slate-700"
+                            onClick={() => beginEditProject(project)}
+                            title={`Edit ${project.name}`}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">edit</span>
+                          </button>
+                          <button
+                            aria-label={`Delete ${project.name}`}
+                            className="rounded-full p-1.5 text-slate-300 transition hover:bg-slate-100 hover:text-error"
+                            onClick={() => setConfirmDeleteProjectId(project.id)}
+                            title={`Delete ${project.name}`}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">delete</span>
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -5388,7 +5445,6 @@ function CreateRiskModal({
     trigger: string;
     consequence: string;
     responseType: Risk['responseType'];
-    dueDate: string;
     status: RiskStatus;
   }) => void;
 }) {
@@ -5403,7 +5459,6 @@ function CreateRiskModal({
     trigger: '',
     consequence: '',
     responseType: 'Mitigate' as Risk['responseType'],
-    dueDate: '',
     status: 'Pending' as RiskStatus,
   });
 
@@ -5418,7 +5473,6 @@ function CreateRiskModal({
       trigger: '',
       consequence: '',
       responseType: 'Mitigate',
-      dueDate: '',
       status: 'Pending',
     });
   }
@@ -5429,12 +5483,11 @@ function CreateRiskModal({
       !form.title &&
       !form.trigger &&
       !form.consequence &&
-      !form.dueDate &&
       form.id !== nextRiskId
     ) {
       setForm((current) => ({...current, id: nextRiskId}));
     }
-  }, [form.consequence, form.dueDate, form.id, form.title, form.trigger, nextRiskId, open]);
+  }, [form.consequence, form.id, form.title, form.trigger, nextRiskId, open]);
 
   if (!open) {
     return null;
@@ -5610,14 +5663,6 @@ function CreateRiskModal({
                     ))}
                   </select>
                 </FormField>
-                <FormField label="Due date (optional)">
-                  <input
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
-                    onChange={(event) => setForm((current) => ({...current, dueDate: event.target.value}))}
-                    type="date"
-                    value={form.dueDate}
-                  />
-                </FormField>
               </div>
 
               <div className="rounded-3xl border border-slate-200 bg-slate-50/70 px-4 py-4">
@@ -5714,7 +5759,6 @@ function CreateRiskModal({
                     trigger: form.trigger,
                     consequence: form.consequence,
                     responseType: form.responseType,
-                    dueDate: form.dueDate,
                     status: form.status,
                   });
                   resetRiskDraft();
@@ -5885,7 +5929,7 @@ function TrendsAnalyticsPage({
 }: {
   risks: Risk[];
 }) {
-  const burndownTimeframe: BurndownTimeframe = 'all';
+  const [burndownTimeframe, setBurndownTimeframe] = useState<BurndownTimeframe>('all');
   const [selectedBurndownRiskIds, setSelectedBurndownRiskIds] = useState<string[]>(() =>
     risks.map((risk) => risk.id),
   );
@@ -5914,8 +5958,7 @@ function TrendsAnalyticsPage({
     .map((risk) => ({
       risk,
       points: filterBurndownPoints(buildRiskBurndownTimeline(risk), burndownTimeframe),
-    }))
-    .filter((series) => series.points.length > 0);
+    }));
   const selectedBurndownPointDetail = selectedBurndownPoint
     ? burndownSeries
         .flatMap((series) =>
@@ -6204,6 +6247,30 @@ function TrendsAnalyticsPage({
                 </div>
               </label>
             </div>
+            <div className="w-full max-w-[24rem]">
+              <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Time Window</div>
+              <div className="grid grid-cols-4 rounded-2xl bg-slate-100 p-1">
+                {([
+                  ['all', 'All time'],
+                  ['12m', 'Last 12M'],
+                  ['6m', 'Last 6M'],
+                  ['3m', 'Last 3M'],
+                ] as Array<[BurndownTimeframe, string]>).map(([value, label]) => (
+                  <button
+                    key={value}
+                    className={`rounded-xl px-2 py-2 text-[10px] font-bold uppercase tracking-[0.08em] transition ${
+                      burndownTimeframe === value
+                        ? 'bg-white text-on-surface shadow-sm'
+                        : 'text-slate-500 hover:text-on-surface'
+                    }`}
+                    onClick={() => setBurndownTimeframe(value)}
+                    type="button"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="relative" ref={burndownExportMenuRef}>
               <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Export</div>
               <button
@@ -6397,7 +6464,7 @@ function SharedLibraryPage({
         <div>
           <h1 className="font-headline text-4xl font-extrabold tracking-tight text-on-surface">Shared Library</h1>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-on-surface-variant">
-            Reuse common risks and decisions across projects while keeping scoring, status, ownership, response, and due dates local to each project.
+            Reuse common risks and decisions across projects while keeping scoring, status, ownership, and response local to each project.
           </p>
         </div>
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-900">
@@ -7140,6 +7207,7 @@ function RiskRegisterPage({
   const [heatmapExportState, setHeatmapExportState] = useState<'idle' | 'copied' | 'copy-failed'>('idle');
   const [heatmapCopyError, setHeatmapCopyError] = useState('');
   const [heatmapExternalOnly, setHeatmapExternalOnly] = useState(false);
+  const [heatmapHideLowRisks, setHeatmapHideLowRisks] = useState(false);
   const [heatmapSettingsOpen, setHeatmapSettingsOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'All' | RiskStatus>('All');
   const [ownerFilter, setOwnerFilter] = useState('All');
@@ -7221,9 +7289,15 @@ function RiskRegisterPage({
   const averageScore = activeRisks
     ? (openRisks.reduce((total, risk) => total + risk.likelihood * risk.impact, 0) / activeRisks).toFixed(1)
     : '0.0';
-  const heatmapRisks = heatmapExternalOnly
-    ? openRisks.filter((risk) => !risk.internalOnly)
-    : openRisks;
+  const heatmapRisks = openRisks.filter((risk) => {
+    if (heatmapExternalOnly && risk.internalOnly) {
+      return false;
+    }
+    if (heatmapHideLowRisks && risk.severity === 'Low') {
+      return false;
+    }
+    return true;
+  });
   const heatmapValues = createHeatmapValues(heatmapRisks);
   const heatmapRiskMap = createHeatmapRiskMap(heatmapRisks);
   const heatmapMatches = selectedHeatmapCell
@@ -7239,7 +7313,7 @@ function RiskRegisterPage({
       return;
     }
 
-    const stillHasMatches = openRisks.some(
+    const stillHasMatches = heatmapRisks.some(
       (risk) =>
         risk.likelihood === selectedHeatmapCell.likelihood &&
         risk.impact === selectedHeatmapCell.impact,
@@ -7248,7 +7322,7 @@ function RiskRegisterPage({
     if (!stillHasMatches) {
       setSelectedHeatmapCell(null);
     }
-  }, [openRisks, selectedHeatmapCell]);
+  }, [heatmapRisks, selectedHeatmapCell]);
 
   useEffect(() => {
     if (heatmapExportState === 'idle') {
@@ -7272,7 +7346,6 @@ function RiskRegisterPage({
       'Severity',
       'Owner',
       'Last Updated',
-      'Due Date',
       'Linked Decision',
       'Statement',
     ];
@@ -7285,7 +7358,6 @@ function RiskRegisterPage({
       risk.severity,
       risk.owner,
       risk.lastUpdated,
-      risk.dueDate || '',
       risk.linkedDecision,
       risk.statement,
     ]);
@@ -7424,7 +7496,7 @@ function RiskRegisterPage({
                 aria-expanded={heatmapSettingsOpen}
                 aria-label="Display and export settings"
                 className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
-                  heatmapSettingsOpen || heatmapExternalOnly
+                  heatmapSettingsOpen || heatmapExternalOnly || heatmapHideLowRisks
                     ? 'bg-primary text-white shadow-sm'
                     : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                 }`}
@@ -7463,6 +7535,15 @@ function RiskRegisterPage({
                         checked={heatmapExternalOnly}
                         className="h-3.5 w-3.5 accent-primary"
                         onChange={(event) => setHeatmapExternalOnly(event.target.checked)}
+                        type="checkbox"
+                      />
+                    </label>
+                    <label className="mb-3 flex cursor-pointer items-center justify-between rounded-xl bg-slate-50 px-3 py-2 transition hover:bg-slate-100">
+                      <span className="text-[11px] font-semibold text-on-surface">Hide low risks</span>
+                      <input
+                        checked={heatmapHideLowRisks}
+                        className="h-3.5 w-3.5 accent-primary"
+                        onChange={(event) => setHeatmapHideLowRisks(event.target.checked)}
                         type="checkbox"
                       />
                     </label>
@@ -7772,6 +7853,14 @@ function RiskRegisterPage({
                                   {risk.sharedRiskRole === 'source' ? 'Published' : 'Linked'}
                                 </span>
                               ) : null}
+                              {risk.internalOnly ? (
+                                <span
+                                  className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+                                  title="Internal only"
+                                >
+                                  <span className="material-symbols-outlined text-[13px]">visibility_off</span>
+                                </span>
+                              ) : null}
                             </div>
                             <div className="max-w-xl text-xs leading-relaxed text-on-surface-variant">{risk.statement}</div>
                           </div>
@@ -7859,7 +7948,17 @@ function RiskRegisterPage({
                     </td>
                     <td className="px-6 py-5">
                       <div className="space-y-1">
-                        <div className="text-sm font-bold text-slate-600">{risk.title}</div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="text-sm font-bold text-slate-600">{risk.title}</div>
+                          {risk.internalOnly ? (
+                            <span
+                              className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-slate-500"
+                              title="Internal only"
+                            >
+                              <span className="material-symbols-outlined text-[13px]">visibility_off</span>
+                            </span>
+                          ) : null}
+                        </div>
                         <div className="max-w-xl text-xs leading-relaxed text-slate-500">{risk.statement}</div>
                       </div>
                     </td>
@@ -8285,11 +8384,11 @@ function DecisionDetailPanel({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-          <div className="rounded-xl bg-slate-50 px-3 py-2.5">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-[minmax(12rem,1.25fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="min-w-0 rounded-xl bg-slate-50 px-4 py-3">
             <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Status</div>
             <select
-              className="w-full bg-transparent text-sm font-semibold text-on-surface outline-none"
+              className="w-full min-w-0 bg-transparent text-base font-semibold text-on-surface outline-none"
               disabled={decision.statusLocked}
               value={decision.status}
               onChange={(e) => save({status: e.target.value as DecisionStatus}, 'Status updated')}
@@ -9253,7 +9352,7 @@ function SharedRiskDrawer({
 
         <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
           <div className="rounded-2xl border border-primary/15 bg-primary/5 px-4 py-4 text-sm leading-relaxed text-on-surface-variant">
-            This shared risk is read-only in this project. The source project owns the upstream statement and assessment. Create a linked local risk when this project needs its own local scoring, ownership, response, or due dates.
+            This shared risk is read-only in this project. The source project owns the upstream statement and assessment. Create a linked local risk when this project needs its own local scoring, ownership, or response.
           </div>
 
           <div className="grid gap-3">
@@ -9404,7 +9503,9 @@ function RiskDrawer({
   const [actionDraft, setActionDraft] = useState({title: '', owner: '', dueDate: ''});
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editingRiskId, setEditingRiskId] = useState(false);
+  const [editingRiskTitle, setEditingRiskTitle] = useState(false);
   const [riskIdDraft, setRiskIdDraft] = useState(risk.id);
+  const [riskTitleDraft, setRiskTitleDraft] = useState(risk.title);
   const [riskIdError, setRiskIdError] = useState('');
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [projectedResidualOpen, setProjectedResidualOpen] = useState(false);
@@ -9434,7 +9535,9 @@ function RiskDrawer({
     setActionDraft({title: '', owner: '', dueDate: ''});
     setConfirmDelete(false);
     setEditingRiskId(false);
+    setEditingRiskTitle(false);
     setRiskIdDraft(risk.id);
+    setRiskTitleDraft(risk.title);
     setRiskIdError('');
     setHistoryExpanded(false);
     setProjectedResidualOpen(false);
@@ -9449,7 +9552,7 @@ function RiskDrawer({
       mitigation: risk.mitigation,
       contingency: risk.contingency,
     });
-  }, [risk.id, risk.trigger, risk.consequence, risk.mitigation, risk.contingency]);
+  }, [risk.id, risk.title, risk.trigger, risk.consequence, risk.mitigation, risk.contingency]);
 
   useEffect(() => {
     if (!savedFieldLabel) {
@@ -9495,6 +9598,19 @@ function RiskDrawer({
     setSavedFieldLabel('Risk ID updated');
   }
 
+  function saveRiskTitle() {
+    const nextTitle = riskTitleDraft.trim();
+    if (!nextTitle || nextTitle === risk.title) {
+      setEditingRiskTitle(false);
+      setRiskTitleDraft(risk.title);
+      return;
+    }
+
+    onUpdateRisk(risk.id, {title: nextTitle}, 'Risk title updated');
+    setEditingRiskTitle(false);
+    setSavedFieldLabel('Risk title updated');
+  }
+
   function saveQuickField(field: QuickEditFieldName, value: string) {
     setEditingField(null);
 
@@ -9521,7 +9637,6 @@ function RiskDrawer({
 
     const fieldLabels: Record<QuickEditFieldName, string> = {
       owner: 'Owner updated',
-      dueDate: 'Due date updated',
       status: 'Status updated',
       linkedDecision: 'Linked decision updated',
       responseType: 'Response updated',
@@ -9927,9 +10042,60 @@ function RiskDrawer({
                 <span className="material-symbols-outlined text-[13px] opacity-0 transition group-hover:opacity-100">edit</span>
               </button>
             )}
-            <h2 className="mt-1 font-headline text-2xl font-extrabold leading-tight text-on-surface">
-              {risk.title}
-            </h2>
+            {editingRiskTitle ? (
+              <div className="mt-2 w-full">
+                <textarea
+                  autoFocus
+                  className="min-h-24 w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-headline text-xl font-extrabold leading-tight text-on-surface outline-none transition focus:border-primary/40 focus:bg-white"
+                  onChange={(event) => setRiskTitleDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) saveRiskTitle();
+                    if (event.key === 'Escape') {
+                      setEditingRiskTitle(false);
+                      setRiskTitleDraft(risk.title);
+                    }
+                  }}
+                  value={riskTitleDraft}
+                />
+                <div className="mt-2 flex gap-2">
+                  <button
+                    className="rounded-full bg-primary px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-white transition hover:bg-primary-dim disabled:opacity-40"
+                    disabled={!riskTitleDraft.trim()}
+                    onClick={saveRiskTitle}
+                    type="button"
+                  >
+                    Save
+                  </button>
+                  <button
+                    className="rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600 transition hover:bg-slate-200"
+                    onClick={() => {
+                      setEditingRiskTitle(false);
+                      setRiskTitleDraft(risk.title);
+                    }}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                className="group mt-1 block w-full rounded-xl text-left transition hover:bg-slate-50"
+                onClick={() => {
+                  setRiskTitleDraft(risk.title);
+                  setEditingRiskTitle(true);
+                }}
+                title="Edit risk title"
+                type="button"
+              >
+                <h2 className="font-headline text-2xl font-extrabold leading-tight text-on-surface">
+                  {risk.title}
+                  <span className="material-symbols-outlined ml-2 align-middle text-[16px] text-slate-300 opacity-0 transition group-hover:opacity-100">
+                    edit
+                  </span>
+                </h2>
+              </button>
+            )}
           </div>
           <button
             className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
@@ -10237,12 +10403,13 @@ function RiskDrawer({
             viewValue={risk.mitigation}
           />
           <CollapsibleDrawerSection
+            connected
             open={projectedResidualOpen}
             summary={`${risk.residualLikelihood} x ${risk.residualImpact} = ${getRiskScoreLabel(risk.residualLikelihood, risk.residualImpact)}`}
             title="Projected Residual Risk"
             onToggle={() => setProjectedResidualOpen((current) => !current)}
           >
-            <div className="rounded-2xl bg-surface-container-low p-4">
+            <div className="space-y-4">
               <div className="mb-3 text-sm leading-relaxed text-on-surface-variant">
                 Set the risk score expected after the mitigation plan is complete. This does not change the current risk score.
               </div>
@@ -10273,6 +10440,7 @@ function RiskDrawer({
             </div>
           </CollapsibleDrawerSection>
           <CollapsibleDrawerSection
+            connected
             open={mitigationActionsOpen}
             summary={`${risk.mitigationActions.length} action${risk.mitigationActions.length === 1 ? '' : 's'}`}
             title="Mitigation Actions"
@@ -10287,20 +10455,10 @@ function RiskDrawer({
               onUpdate={updateMitigationAction}
             />
           </CollapsibleDrawerSection>
-          <div className="grid grid-cols-2 gap-4">
-            <QuickEditDate
-              activeField={editingField}
-              field="dueDate"
-              label="Due date"
-              value={risk.dueDate}
-              onBeginEdit={setEditingField}
-              onSave={saveQuickField}
-            />
-          </div>
         </DrawerSection>
 
         <DrawerSection title="Context">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             <QuickEditSelect
               activeField={editingField}
               field="linkedDecision"
@@ -10310,10 +10468,9 @@ function RiskDrawer({
               onBeginEdit={setEditingField}
               onSave={saveQuickField}
             />
-            <DrawerMeta label="Attachments" value={`${risk.attachments}`} />
-            <DrawerMeta label="Comments" value={`${getRiskCommentCount(risk)}`} />
           </div>
           <CollapsibleDrawerSection
+            connected
             open={commentsOpen}
             summary={`${getRiskCommentCount(risk)} comment${getRiskCommentCount(risk) === 1 ? '' : 's'}`}
             title="Comments"
@@ -10324,7 +10481,6 @@ function RiskDrawer({
               draft={commentDraft}
               editingCommentId={editingCommentId}
               editDraft={commentEditDraft}
-              legacyCommentCount={risk.legacyCommentCount}
               onAdd={addComment}
               onBeginEdit={beginEditComment}
               onCancelEdit={() => {
@@ -10340,6 +10496,7 @@ function RiskDrawer({
         </DrawerSection>
 
         <CollapsibleDrawerSection
+          connected
           open={recordDetailsOpen}
           summary={`Last updated ${formatHistoryTimestamp(risk.lastUpdated)}`}
           title="Record Details"
@@ -10352,6 +10509,7 @@ function RiskDrawer({
         </CollapsibleDrawerSection>
 
         <CollapsibleDrawerSection
+          connected
           open={historyOpen}
           summary={`${risk.history.length} entr${risk.history.length === 1 ? 'y' : 'ies'}`}
           title="History"
@@ -11129,17 +11287,23 @@ function CollapsibleDrawerSection({
   open,
   children,
   onToggle,
+  connected = false,
 }: {
   title: string;
   summary?: string;
   open: boolean;
   children: ReactNode;
   onToggle: () => void;
+  connected?: boolean;
 }) {
   return (
-    <section className="space-y-4">
+    <section className={connected && open ? 'space-y-0' : 'space-y-4'}>
       <button
-        className="group flex w-full items-center justify-between gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-left transition hover:bg-slate-100/90"
+        className={`group flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-left transition hover:bg-slate-100/90 ${
+          connected && open
+            ? 'rounded-t-2xl border border-slate-200 border-b-transparent'
+            : 'rounded-2xl'
+        }`}
         onClick={onToggle}
         type="button"
       >
@@ -11156,7 +11320,15 @@ function CollapsibleDrawerSection({
           {open ? 'expand_less' : 'expand_more'}
         </span>
       </button>
-      {open ? children : null}
+      {open ? (
+        connected ? (
+          <div className="rounded-b-2xl border border-t-0 border-slate-200 bg-white px-4 pb-4 pt-2">
+            {children}
+          </div>
+        ) : (
+          children
+        )
+      ) : null}
     </section>
   );
 }
@@ -11365,20 +11537,7 @@ function MitigationActionsEditor({
   onDelete: (actionId: string) => void;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Mitigation Actions</div>
-          <div className="mt-1 text-xs leading-relaxed text-on-surface-variant">
-            Track the actual work that makes the mitigation plan credible.
-          </div>
-        </div>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
-          {actions.length}
-        </span>
-      </div>
-
-      <div className="space-y-3">
+    <div className="space-y-3">
         {actions.length === 0 ? (
           <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface-variant">
             No mitigation actions yet. Add specific actions when ownership, due dates, or completion tracking matters.
@@ -11391,21 +11550,21 @@ function MitigationActionsEditor({
                 onBlur={(event) => onUpdate(action.id, {title: event.target.value.trim() || action.title})}
                 defaultValue={action.title}
               />
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <input
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                  className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25 sm:col-span-2"
                   onBlur={(event) => onUpdate(action.id, {owner: event.target.value.trim()})}
                   defaultValue={action.owner}
                   placeholder="Owner"
                 />
                 <input
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                  className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
                   onChange={(event) => onUpdate(action.id, {dueDate: event.target.value})}
                   type="date"
                   value={action.dueDate}
                 />
                 <select
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                  className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
                   onChange={(event) => onUpdate(action.id, {status: event.target.value as MitigationAction['status']})}
                   value={action.status}
                 >
@@ -11424,7 +11583,6 @@ function MitigationActionsEditor({
             </div>
           ))
         )}
-      </div>
 
       <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3">
         <input
@@ -11462,7 +11620,6 @@ function MitigationActionsEditor({
 
 function RiskCommentsEditor({
   comments,
-  legacyCommentCount,
   draft,
   editingCommentId,
   editDraft,
@@ -11475,7 +11632,6 @@ function RiskCommentsEditor({
   onDelete,
 }: {
   comments: RiskComment[];
-  legacyCommentCount: number;
   draft: string;
   editingCommentId: string | null;
   editDraft: string;
@@ -11488,13 +11644,7 @@ function RiskCommentsEditor({
   onDelete: (commentId: string) => void;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      {legacyCommentCount > 0 ? (
-        <div className="mb-3 rounded-xl bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-900">
-          This imported record had {legacyCommentCount} legacy comment{legacyCommentCount === 1 ? '' : 's'} without stored text. New comments added here can be edited or deleted.
-        </div>
-      ) : null}
-
+    <div className="space-y-4">
       <textarea
         className="min-h-20 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:bg-white"
         onChange={(event) => onChangeDraft(event.target.value)}
@@ -11510,54 +11660,48 @@ function RiskCommentsEditor({
         Add Comment
       </button>
 
-      <div className="mt-4 space-y-3">
-        {comments.length === 0 ? (
-          <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface-variant">
-            No editable comments yet.
-          </div>
-        ) : (
-          comments.map((comment) => (
-            <div key={comment.id} className="rounded-xl bg-slate-50 px-4 py-3">
-              {editingCommentId === comment.id ? (
-                <div>
-                  <textarea
-                    className="min-h-20 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-on-surface outline-none focus:border-primary/25"
-                    onChange={(event) => onChangeEditDraft(event.target.value)}
-                    value={editDraft}
-                  />
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      className="rounded-full bg-primary px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white"
-                      disabled={!editDraft.trim()}
-                      onClick={() => onSaveEdit(comment.id)}
-                      type="button"
-                    >
-                      Save
-                    </button>
-                    <button
-                      className="rounded-full bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600"
-                      onClick={onCancelEdit}
-                      type="button"
-                    >
-                      Cancel
-                    </button>
-                  </div>
+      <div className="space-y-3">
+        {comments.map((comment) => (
+          <div key={comment.id} className="rounded-xl bg-slate-50 px-4 py-3">
+            {editingCommentId === comment.id ? (
+              <div>
+                <textarea
+                  className="min-h-20 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-on-surface outline-none focus:border-primary/25"
+                  onChange={(event) => onChangeEditDraft(event.target.value)}
+                  value={editDraft}
+                />
+                <div className="mt-2 flex gap-2">
+                  <button
+                    className="rounded-full bg-primary px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white"
+                    disabled={!editDraft.trim()}
+                    onClick={() => onSaveEdit(comment.id)}
+                    type="button"
+                  >
+                    Save
+                  </button>
+                  <button
+                    className="rounded-full bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-600"
+                    onClick={onCancelEdit}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
                 </div>
-              ) : (
-                <>
-                  <p className="whitespace-pre-line text-sm leading-relaxed text-on-surface">{comment.body}</p>
-                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-on-surface-variant">
-                    <span>{comment.author} · {formatHistoryTimestamp(comment.updatedAt)}</span>
-                    <span className="flex gap-2">
-                      <button className="font-bold text-primary" onClick={() => onBeginEdit(comment)} type="button">Edit</button>
-                      <button className="font-bold text-rose-700" onClick={() => onDelete(comment.id)} type="button">Delete</button>
-                    </span>
-                  </div>
-                </>
-              )}
-            </div>
-          ))
-        )}
+              </div>
+            ) : (
+              <>
+                <p className="whitespace-pre-line text-sm leading-relaxed text-on-surface">{comment.body}</p>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-on-surface-variant">
+                  <span>{comment.author} · {formatHistoryTimestamp(comment.updatedAt)}</span>
+                  <span className="flex gap-2">
+                    <button className="font-bold text-primary" onClick={() => onBeginEdit(comment)} type="button">Edit</button>
+                    <button className="font-bold text-rose-700" onClick={() => onDelete(comment.id)} type="button">Delete</button>
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -11608,7 +11752,7 @@ function QuickEditSelect({
           <select
             autoFocus
             className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm font-semibold text-on-surface outline-none focus:border-primary/25"
-            onBlur={() => onBeginEdit(null)}
+            onBlur={() => window.setTimeout(() => onBeginEdit(null), 0)}
             onChange={(event) => onSave(field, event.target.value)}
             value={value}
           >
