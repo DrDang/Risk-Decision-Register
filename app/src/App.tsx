@@ -1014,7 +1014,6 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
 function buildSnapshotHashPayload(snapshot: AppSnapshot) {
   return {
     version: snapshot.version,
-    activeProjectId: snapshot.activeProjectId,
     projects: snapshot.projects,
     sharedLibrary: snapshot.sharedLibrary ?? {
       risks: [],
