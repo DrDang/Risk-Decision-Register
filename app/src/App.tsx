@@ -4527,7 +4527,11 @@ export default function App() {
   }
 
   function handlePublishBoard() {
-    if (!registrySession.baseDocumentId || !registrySession.baseRevision || !registrySession.baseContentHash) {
+    if (
+      !registrySession.baseDocumentId ||
+      registrySession.baseRevision == null ||
+      !registrySession.baseContentHash
+    ) {
       throw new Error('Open a board first before publishing.');
     }
 
@@ -5417,6 +5421,12 @@ function TopNav({
   );
 }
 
+function getOwnerSuggestions(ownerOptions: string[]) {
+  return Array.from(new Set(ownerOptions.map((option) => option.trim()).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b),
+  );
+}
+
 function CreateRiskModal({
   open,
   existingIds,
@@ -5448,10 +5458,13 @@ function CreateRiskModal({
   }) => void;
 }) {
   const backdropPressStarted = useRef(false);
+  const ownerPickerRef = useRef<HTMLDivElement | null>(null);
+  const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
+  const ownerSuggestions = getOwnerSuggestions(ownerOptions);
   const [form, setForm] = useState({
     id: nextRiskId,
     title: '',
-    owner: ownerOptions[0] ?? '',
+    owner: ownerSuggestions[0] ?? '',
     linkedDecision: 'None',
     likelihood: '3',
     impact: '3',
@@ -5465,7 +5478,7 @@ function CreateRiskModal({
     setForm({
       id: nextRiskId,
       title: '',
-      owner: ownerOptions[0] ?? '',
+      owner: ownerSuggestions[0] ?? '',
       linkedDecision: 'None',
       likelihood: '3',
       impact: '3',
@@ -5474,6 +5487,7 @@ function CreateRiskModal({
       responseType: 'Mitigate',
       status: 'Pending',
     });
+    setOwnerMenuOpen(false);
   }
 
   useEffect(() => {
@@ -5487,6 +5501,21 @@ function CreateRiskModal({
       setForm((current) => ({...current, id: nextRiskId}));
     }
   }, [form.consequence, form.id, form.title, form.trigger, nextRiskId, open]);
+
+  useEffect(() => {
+    if (!ownerMenuOpen) {
+      return undefined;
+    }
+
+    function handleDocumentMouseDown(event: MouseEvent) {
+      if (!ownerPickerRef.current?.contains(event.target as Node)) {
+        setOwnerMenuOpen(false);
+      }
+    }
+
+    document.addEventListener('mousedown', handleDocumentMouseDown);
+    return () => document.removeEventListener('mousedown', handleDocumentMouseDown);
+  }, [ownerMenuOpen]);
 
   if (!open) {
     return null;
@@ -5572,18 +5601,54 @@ function CreateRiskModal({
                   />
                 </FormField>
                 <FormField label="Owner">
-                  <input
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
-                    list="risk-owner-options"
-                    onChange={(event) => setForm((current) => ({...current, owner: event.target.value}))}
-                    placeholder="Select or type an owner"
-                    value={form.owner}
-                  />
-                  <datalist id="risk-owner-options">
-                    {ownerOptions.map((option) => (
-                      <option key={option} value={option} />
-                    ))}
-                  </datalist>
+                  <div className="relative" ref={ownerPickerRef}>
+                    <input
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-4 pr-11 text-sm text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
+                      onChange={(event) => {
+                        setForm((current) => ({...current, owner: event.target.value}));
+                        setOwnerMenuOpen(true);
+                      }}
+                      onFocus={() => {
+                        if (ownerSuggestions.length) {
+                          setOwnerMenuOpen(true);
+                        }
+                      }}
+                      placeholder="Select or type an owner"
+                      value={form.owner}
+                    />
+                    <button
+                      aria-label="Show previous owners"
+                      className="absolute inset-y-1 right-1 flex w-9 items-center justify-center rounded-xl text-slate-500 transition hover:bg-white hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!ownerSuggestions.length}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        setOwnerMenuOpen((current) => !current);
+                      }}
+                      type="button"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">expand_more</span>
+                    </button>
+                    {ownerMenuOpen && ownerSuggestions.length ? (
+                      <div className="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-[80] max-h-56 overflow-y-auto rounded-2xl border border-slate-200 bg-white py-2 shadow-[0_18px_45px_rgba(42,52,57,0.16)]">
+                        {ownerSuggestions.map((option) => (
+                          <button
+                            className={`block w-full px-4 py-2.5 text-left text-sm font-semibold transition hover:bg-slate-50 ${
+                              option === form.owner ? 'text-primary' : 'text-on-surface'
+                            }`}
+                            key={option}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              setForm((current) => ({...current, owner: option}));
+                              setOwnerMenuOpen(false);
+                            }}
+                            type="button"
+                          >
+                            {option}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 </FormField>
                 <FormField label="Linked decision">
                   <select
