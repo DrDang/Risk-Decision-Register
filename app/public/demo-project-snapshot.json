@@ -84,10 +84,30 @@
           "likelihood": 4,
           "impact": 5,
           "residualRating": "High (20)",
+          "residualLikelihood": 2,
+          "residualImpact": 4,
+          "residualRiskRating": "Medium (8)",
           "responseType": "Mitigate",
           "project": "Alpha Core",
           "lastUpdated": "2026-04-20T15:20:00.000Z",
+          "dueDate": "2026-06-12",
           "mitigation": "Complete service compatibility tests, stage token validation fallbacks, and require go-live evidence from each dependent team.",
+          "mitigationActions": [
+            {
+              "id": "MA-0101-1",
+              "title": "Complete compatibility testing with dependent services",
+              "owner": "Sarah Jenkins",
+              "dueDate": "2026-05-22",
+              "status": "In Progress"
+            },
+            {
+              "id": "MA-0101-2",
+              "title": "Confirm fallback validation and go-live evidence",
+              "owner": "Sarah Jenkins",
+              "dueDate": "2026-06-12",
+              "status": "Not Started"
+            }
+          ],
           "contingency": "Rollback traffic to the legacy token path and freeze rollout if authentication errors exceed the threshold for ten minutes.",
           "linkedDecision": "DEC-0301",
           "comments": [],
@@ -120,10 +140,30 @@
           "likelihood": 3,
           "impact": 4,
           "residualRating": "Medium (12)",
+          "residualLikelihood": 2,
+          "residualImpact": 3,
+          "residualRiskRating": "Low (6)",
           "responseType": "Mitigate",
           "project": "Alpha Core",
           "lastUpdated": "2026-04-18T11:10:00.000Z",
+          "dueDate": "2026-05-24",
           "mitigation": "Pre-stage residency evidence, map datasets by region, and review control narratives with counsel ahead of sign-off.",
+          "mitigationActions": [
+            {
+              "id": "MA-0102-1",
+              "title": "Pre-stage residency evidence package",
+              "owner": "Marcus Thorne",
+              "dueDate": "2026-05-08",
+              "status": "In Progress"
+            },
+            {
+              "id": "MA-0102-2",
+              "title": "Complete counsel review of control narrative",
+              "owner": "Marcus Thorne",
+              "dueDate": "2026-05-24",
+              "status": "Not Started"
+            }
+          ],
           "contingency": "Hold the regulated release train and split unaffected capabilities into a separate deployment.",
           "linkedDecision": "DEC-0302",
           "comments": [],
@@ -151,10 +191,30 @@
           "likelihood": 2,
           "impact": 2,
           "residualRating": "Low (4)",
+          "residualLikelihood": 1,
+          "residualImpact": 2,
+          "residualRiskRating": "Low (2)",
           "responseType": "Mitigate",
           "project": "Alpha Core",
           "lastUpdated": "2026-04-16T09:00:00.000Z",
+          "dueDate": "2026-05-10",
           "mitigation": "Separate the launch wave from the platform cutover and staff a focused hypercare period.",
+          "mitigationActions": [
+            {
+              "id": "MA-0103-1",
+              "title": "Move customer launch wave away from cutover",
+              "owner": "Priya Nair",
+              "dueDate": "2026-05-03",
+              "status": "In Progress"
+            },
+            {
+              "id": "MA-0103-2",
+              "title": "Finalize hypercare staffing plan",
+              "owner": "Priya Nair",
+              "dueDate": "2026-05-10",
+              "status": "Not Started"
+            }
+          ],
           "contingency": "Push the external launch by one week if release readiness remains amber.",
           "linkedDecision": "None",
           "comments": [],
@@ -326,10 +386,30 @@
           "likelihood": 4,
           "impact": 4,
           "residualRating": "High (16)",
+          "residualLikelihood": 2,
+          "residualImpact": 4,
+          "residualRiskRating": "Medium (8)",
           "responseType": "Mitigate",
           "project": "Beta Client Portal",
           "lastUpdated": "2026-04-20T14:10:00.000Z",
+          "dueDate": "2026-06-18",
           "mitigation": "Run portal canary releases behind feature flags, pre-stage support messaging, and require synthetic sign-in checks before each rollout wave.",
+          "mitigationActions": [
+            {
+              "id": "MA-0207-1",
+              "title": "Run canary release with feature flags",
+              "owner": "Lena Ortiz",
+              "dueDate": "2026-05-30",
+              "status": "In Progress"
+            },
+            {
+              "id": "MA-0207-2",
+              "title": "Complete synthetic sign-in checks for rollout waves",
+              "owner": "Lena Ortiz",
+              "dueDate": "2026-06-18",
+              "status": "Not Started"
+            }
+          ],
           "contingency": "Disable the new session path for the portal and route traffic through the legacy login stack if error rates rise.",
           "linkedDecision": "DEC-0401",
           "comments": [],
@@ -362,10 +442,30 @@
           "likelihood": 3,
           "impact": 3,
           "residualRating": "Medium (9)",
+          "residualLikelihood": 2,
+          "residualImpact": 2,
+          "residualRiskRating": "Low (4)",
           "responseType": "Mitigate",
           "project": "Beta Client Portal",
           "lastUpdated": "2026-04-15T16:40:00.000Z",
+          "dueDate": "2026-05-31",
           "mitigation": "Prioritize legal and marketing review for the top languages and hold low-volume locales for the follow-on release if needed.",
+          "mitigationActions": [
+            {
+              "id": "MA-0208-1",
+              "title": "Complete legal review for top languages",
+              "owner": "Helen Brooks",
+              "dueDate": "2026-05-16",
+              "status": "In Progress"
+            },
+            {
+              "id": "MA-0208-2",
+              "title": "Finalize low-volume locale release decision",
+              "owner": "Helen Brooks",
+              "dueDate": "2026-05-31",
+              "status": "Not Started"
+            }
+          ],
           "contingency": "Launch with English fallback only in low-volume regions after stakeholder approval.",
           "linkedDecision": "None",
           "comments": [],
@@ -393,10 +493,30 @@
           "likelihood": 2,
           "impact": 2,
           "residualRating": "Low (4)",
+          "residualLikelihood": 1,
+          "residualImpact": 2,
+          "residualRiskRating": "Low (2)",
           "responseType": "Mitigate",
           "project": "Beta Client Portal",
           "lastUpdated": "2026-04-14T18:00:00.000Z",
+          "dueDate": "2026-05-17",
           "mitigation": "Schedule live support simulations and align launch staffing with the cutover calendar.",
+          "mitigationActions": [
+            {
+              "id": "MA-0209-1",
+              "title": "Complete live support simulation",
+              "owner": "Jordan Ellis",
+              "dueDate": "2026-05-09",
+              "status": "In Progress"
+            },
+            {
+              "id": "MA-0209-2",
+              "title": "Confirm launch staffing roster",
+              "owner": "Jordan Ellis",
+              "dueDate": "2026-05-17",
+              "status": "Not Started"
+            }
+          ],
           "contingency": "Throttle the rollout cohort size if service levels fall below target.",
           "linkedDecision": "DEC-0401",
           "comments": [],
@@ -567,10 +687,30 @@
           "likelihood": 4,
           "impact": 4,
           "residualRating": "High (16)",
+          "residualLikelihood": 2,
+          "residualImpact": 3,
+          "residualRiskRating": "Low (6)",
           "responseType": "Mitigate",
           "project": "Gamma Data Hub",
           "lastUpdated": "2026-04-19T19:00:00.000Z",
+          "dueDate": "2026-06-21",
           "mitigation": "Add schema and mapping validation gates before each reference data publication and alert subscribers on breaking changes.",
+          "mitigationActions": [
+            {
+              "id": "MA-0304-1",
+              "title": "Add schema validation gate",
+              "owner": "A. Chen",
+              "dueDate": "2026-06-02",
+              "status": "In Progress"
+            },
+            {
+              "id": "MA-0304-2",
+              "title": "Complete subscriber alert and sign-off flow",
+              "owner": "A. Chen",
+              "dueDate": "2026-06-21",
+              "status": "Not Started"
+            }
+          ],
           "contingency": "Revert the reference data package and suspend downstream refresh jobs until mapping validation passes.",
           "linkedDecision": "DEC-0501",
           "comments": [],
@@ -598,10 +738,30 @@
           "likelihood": 3,
           "impact": 3,
           "residualRating": "Medium (9)",
+          "residualLikelihood": 2,
+          "residualImpact": 2,
+          "residualRiskRating": "Low (4)",
           "responseType": "Mitigate",
           "project": "Gamma Data Hub",
           "lastUpdated": "2026-04-17T08:30:00.000Z",
+          "dueDate": "2026-05-29",
           "mitigation": "Tune batch windows and reallocate capacity to the highest-value pipelines.",
+          "mitigationActions": [
+            {
+              "id": "MA-0305-1",
+              "title": "Tune high-volume batch windows",
+              "owner": "Dana Wu",
+              "dueDate": "2026-05-15",
+              "status": "In Progress"
+            },
+            {
+              "id": "MA-0305-2",
+              "title": "Reallocate capacity to priority pipelines",
+              "owner": "Dana Wu",
+              "dueDate": "2026-05-29",
+              "status": "Not Started"
+            }
+          ],
           "contingency": "Delay lower-priority dashboard refreshes until the next cycle.",
           "linkedDecision": "None",
           "comments": [],
@@ -736,10 +896,30 @@
           "likelihood": 4,
           "impact": 4,
           "residualRating": "High (16)",
+          "residualLikelihood": 2,
+          "residualImpact": 3,
+          "residualRiskRating": "Low (6)",
           "responseType": "Mitigate",
           "project": "Delta Field Operations",
           "lastUpdated": "2026-04-20T09:40:00.000Z",
+          "dueDate": "2026-06-07",
           "mitigation": "Validate field mapping packages in the dispatch sandbox and require subscriber sign-off before each reference data release reaches production routes.",
+          "mitigationActions": [
+            {
+              "id": "MA-0405-1",
+              "title": "Validate mapping package in dispatch sandbox",
+              "owner": "Miguel Alvarez",
+              "dueDate": "2026-05-25",
+              "status": "In Progress"
+            },
+            {
+              "id": "MA-0405-2",
+              "title": "Collect subscriber sign-off for release routes",
+              "owner": "Miguel Alvarez",
+              "dueDate": "2026-06-07",
+              "status": "Not Started"
+            }
+          ],
           "contingency": "Freeze dispatch updates and rerun the last known-good mapping package while operations manually triage affected routes.",
           "linkedDecision": "DEC-0601",
           "comments": [],
@@ -772,10 +952,30 @@
           "likelihood": 3,
           "impact": 3,
           "residualRating": "Medium (9)",
+          "residualLikelihood": 2,
+          "residualImpact": 2,
+          "residualRiskRating": "Low (4)",
           "responseType": "Transfer",
           "project": "Delta Field Operations",
           "lastUpdated": "2026-04-13T17:30:00.000Z",
+          "dueDate": "2026-05-22",
           "mitigation": "Stage spare devices and confirm supplier delivery status twice weekly.",
+          "mitigationActions": [
+            {
+              "id": "MA-0406-1",
+              "title": "Stage spare devices for onboarding wave",
+              "owner": "Tara Singh",
+              "dueDate": "2026-05-08",
+              "status": "In Progress"
+            },
+            {
+              "id": "MA-0406-2",
+              "title": "Confirm final supplier delivery status",
+              "owner": "Tara Singh",
+              "dueDate": "2026-05-22",
+              "status": "Not Started"
+            }
+          ],
           "contingency": "Borrow stock from the training pool for wave one technicians.",
           "linkedDecision": "None",
           "comments": [],

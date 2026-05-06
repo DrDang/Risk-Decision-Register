@@ -1425,6 +1425,16 @@ type RiskBurndownPoint = {
   source: 'initial' | 'likelihood' | 'impact' | 'current';
 };
 
+type RiskBurndownProjection = {
+  at: string;
+  displayDate: string;
+  likelihood: number;
+  impact: number;
+  score: number;
+  severity: RiskSeverity;
+  label: string;
+};
+
 type SelectedBurndownPoint = {
   riskId: string;
   at: string;
@@ -1651,6 +1661,32 @@ function formatBurndownDateLabel(value: string, rangeStart?: number, rangeEnd?: 
     month: 'short',
     year: 'numeric',
   }).format(parsed);
+}
+
+function normalizeProjectionDueDate(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = value.includes('T') ? new Date(value) : new Date(`${value}T23:59:59`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function getProjectionDueDateFromMitigation(risk: Pick<Risk, 'dueDate' | 'mitigationActions'>) {
+  const latestActionDueDate = risk.mitigationActions
+    .map((action) => ({
+      displayDate: action.dueDate,
+      normalizedDate: normalizeProjectionDueDate(action.dueDate),
+    }))
+    .filter((entry): entry is {displayDate: string; normalizedDate: string} => Boolean(entry.normalizedDate))
+    .sort((left, right) => new Date(right.normalizedDate).getTime() - new Date(left.normalizedDate).getTime())[0];
+
+  if (latestActionDueDate) {
+    return latestActionDueDate;
+  }
+
+  const fallbackDueDate = normalizeProjectionDueDate(risk.dueDate);
+  return fallbackDueDate ? {displayDate: risk.dueDate, normalizedDate: fallbackDueDate} : null;
 }
 
 function normalizeBurndownTimestamp(value: string | undefined, fallback: string) {
@@ -5427,6 +5463,24 @@ function getOwnerSuggestions(ownerOptions: string[]) {
   );
 }
 
+function buildRiskBurndownProjection(risk: Risk, visiblePoints: RiskBurndownPoint[]) {
+  const dueDate = getProjectionDueDateFromMitigation(risk);
+  if (!dueDate || visiblePoints.length === 0) {
+    return null;
+  }
+
+  const projected = getResidualRating(risk.residualLikelihood, risk.residualImpact);
+  return {
+    at: dueDate.normalizedDate,
+    displayDate: dueDate.displayDate,
+    likelihood: risk.residualLikelihood,
+    impact: risk.residualImpact,
+    score: projected.score,
+    severity: projected.severity,
+    label: 'Projected post-mitigation score',
+  };
+}
+
 function CreateRiskModal({
   open,
   existingIds,
@@ -6004,6 +6058,7 @@ function TrendsAnalyticsPage({
   const [burndownCopyError, setBurndownCopyError] = useState('');
   const [focusedBurndownRiskId, setFocusedBurndownRiskId] = useState<string>('');
   const [burndownShowExportLegend, setBurndownShowExportLegend] = useState(false);
+  const [showProjectedMitigation, setShowProjectedMitigation] = useState(true);
   const riskSelectorRef = useRef<HTMLDivElement | null>(null);
   const burndownExportMenuRef = useRef<HTMLDivElement | null>(null);
   const burndownChartRef = useRef<SVGSVGElement | null>(null);
@@ -6019,10 +6074,15 @@ function TrendsAnalyticsPage({
   });
   const burndownSeries = burndownRiskOptions
     .filter((risk) => selectedBurndownRiskIds.includes(risk.id))
-    .map((risk) => ({
-      risk,
-      points: filterBurndownPoints(buildRiskBurndownTimeline(risk), burndownTimeframe),
-    }));
+    .map((risk) => {
+      const points = filterBurndownPoints(buildRiskBurndownTimeline(risk), burndownTimeframe);
+      return {
+        risk,
+        points,
+        projection: showProjectedMitigation ? buildRiskBurndownProjection(risk, points) : null,
+      };
+    });
+  const projectedMitigationCount = burndownSeries.filter((series) => series.projection).length;
   const selectedBurndownPointDetail = selectedBurndownPoint
     ? burndownSeries
         .flatMap((series) =>
@@ -6335,6 +6395,20 @@ function TrendsAnalyticsPage({
                 ))}
               </div>
             </div>
+            <label className="flex min-h-[50px] cursor-pointer items-center gap-3 rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-on-surface transition hover:bg-slate-200">
+              <input
+                checked={showProjectedMitigation}
+                className="h-4 w-4 rounded border-slate-300 accent-primary"
+                onChange={() => setShowProjectedMitigation((current) => !current)}
+                type="checkbox"
+              />
+              <span className="min-w-0">
+                <span className="block">Projected mitigation</span>
+                <span className="block text-[11px] font-medium text-on-surface-variant">
+                  {projectedMitigationCount} dashed forecast{projectedMitigationCount === 1 ? '' : 's'}
+                </span>
+              </span>
+            </label>
             <div className="relative" ref={burndownExportMenuRef}>
               <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Export</div>
               <button
@@ -6386,6 +6460,7 @@ function TrendsAnalyticsPage({
             severity: series.risk.severity,
             status: series.risk.status,
             points: series.points,
+            projection: series.projection,
           }))}
           onSelectRisk={(riskId) => {
             setFocusedBurndownRiskId(riskId);
@@ -6466,6 +6541,25 @@ function TrendsAnalyticsPage({
                     </button>
                   );
                 })}
+                {focusedBurndownSeries.projection ? (
+                  <div className="w-[220px] shrink-0 rounded-2xl border border-dashed border-primary/50 bg-white px-4 py-3 text-left">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                      {formatDisplayDate(focusedBurndownSeries.projection.displayDate)}
+                    </div>
+                    <div className="mt-2 text-base font-extrabold text-on-surface">
+                      {focusedBurndownSeries.projection.score}
+                    </div>
+                    <div className="mt-1 text-sm font-semibold text-on-surface">
+                      Likelihood {focusedBurndownSeries.projection.likelihood} / Impact {focusedBurndownSeries.projection.impact}
+                    </div>
+                    <div className="mt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
+                      Projected post-mitigation
+                    </div>
+                    <div className="mt-2 text-sm leading-relaxed text-on-surface-variant">
+                      Based on the user-entered projected residual score and the latest mitigation action due date.
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -10778,6 +10872,7 @@ function RiskBurndownChart({
     severity: RiskSeverity;
     status: RiskStatus;
     points: RiskBurndownPoint[];
+    projection: RiskBurndownProjection | null;
   }[];
   selectedPoint: SelectedBurndownPoint | null;
   showLegend: boolean;
@@ -10788,7 +10883,10 @@ function RiskBurndownChart({
   const [hoverCard, setHoverCard] = useState<{x: number; y: number; riskId: string; title: string} | null>(null);
   const chartSeries = series.filter((item) => item.points.length > 0);
   const allPoints = chartSeries.flatMap((item) =>
-    item.points.map((point) => ({
+    [
+      ...item.points,
+      ...(item.projection ? [item.projection] : []),
+    ].map((point) => ({
       ...point,
       riskId: item.riskId,
       title: item.title,
@@ -11017,6 +11115,30 @@ function RiskBurndownChart({
                   </g>
                 );
               })}
+              {chartSeries.some((item) => item.projection) ? (
+                <g>
+                  <line
+                    stroke="#64748b"
+                    strokeDasharray="8 8"
+                    strokeLinecap="round"
+                    strokeWidth="3"
+                    x1={paddingLeft}
+                    x2={paddingLeft + 34}
+                    y1={legendStartY + Math.ceil(Math.min(chartSeries.length, 8) / legendColumns) * 34 + 4}
+                    y2={legendStartY + Math.ceil(Math.min(chartSeries.length, 8) / legendColumns) * 34 + 4}
+                  />
+                  <text
+                    fill="#64748b"
+                    fontSize="10"
+                    fontWeight="800"
+                    letterSpacing="1.2"
+                    x={paddingLeft + 44}
+                    y={legendStartY + Math.ceil(Math.min(chartSeries.length, 8) / legendColumns) * 34 + 8}
+                  >
+                    DASHED = PROJECTED POST-MITIGATION SCORE
+                  </text>
+                </g>
+              ) : null}
             </>
           ) : null}
 
@@ -11115,6 +11237,63 @@ function RiskBurndownChart({
                     </g>
                   );
                 })}
+                {item.projection && item.points.length > 0 ? (
+                  <g>
+                    <path
+                      d={`M ${xForTime(new Date(item.points[item.points.length - 1].at).getTime())} ${yForScore(item.points[item.points.length - 1].score)} L ${xForTime(new Date(item.projection.at).getTime())} ${yForScore(item.projection.score)}`}
+                      fill="none"
+                      opacity={isActive ? 0.85 : 0.18}
+                      stroke={color}
+                      strokeDasharray="10 10"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={isActive ? 4 : 2.5}
+                      style={{cursor: 'pointer'}}
+                      onClick={() => onSelectRisk(item.riskId)}
+                      onMouseEnter={(event) => {
+                        setHoveredRiskId(item.riskId);
+                        showHoverCard(event, item.riskId, `${item.title} - projected post-mitigation`);
+                      }}
+                      onMouseLeave={() => {
+                        setHoveredRiskId(null);
+                        setHoverCard(null);
+                      }}
+                      onMouseMove={(event) => showHoverCard(event, item.riskId, `${item.title} - projected post-mitigation`)}
+                    />
+                    <circle
+                      cx={xForTime(new Date(item.projection.at).getTime())}
+                      cy={yForScore(item.projection.score)}
+                      fill="#fff"
+                      opacity={isActive ? 1 : 0.3}
+                      r={isActive ? 6 : 4.5}
+                      stroke={color}
+                      strokeDasharray="4 4"
+                      strokeWidth={3}
+                      style={{cursor: 'pointer'}}
+                      onClick={() => onSelectRisk(item.riskId)}
+                      onMouseEnter={(event) => {
+                        setHoveredRiskId(item.riskId);
+                        showHoverCard(event, item.riskId, `${item.title} - projected post-mitigation`);
+                      }}
+                      onMouseLeave={() => {
+                        setHoveredRiskId(null);
+                        setHoverCard(null);
+                      }}
+                      onMouseMove={(event) => showHoverCard(event, item.riskId, `${item.title} - projected post-mitigation`)}
+                    />
+                    <text
+                      fill={color}
+                      fontSize="10"
+                      fontWeight="800"
+                      opacity={isActive ? 0.95 : 0.24}
+                      textAnchor="middle"
+                      x={xForTime(new Date(item.projection.at).getTime())}
+                      y={yForScore(item.projection.score) - 12}
+                    >
+                      projected
+                    </text>
+                  </g>
+                ) : null}
               </g>
             );
           })}
@@ -11134,7 +11313,7 @@ function RiskBurndownChart({
         </div>
       ) : null}
       <div className="mt-3 text-xs leading-relaxed text-on-surface-variant">
-        Filled points indicate score changes that include rationale. Open points indicate baseline or carry-forward points used to show the full score trend over the selected timeframe.
+        Filled points indicate score changes that include rationale. Open points indicate baseline or carry-forward points. Dashed lines show the guestimated post-mitigation score based on the projected residual score and the latest mitigation action due date.
       </div>
     </div>
   );
