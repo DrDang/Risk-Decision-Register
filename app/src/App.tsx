@@ -1428,6 +1428,7 @@ type RiskBurndownPoint = {
 type RiskBurndownProjection = {
   at: string;
   displayDate: string;
+  dueDatePassed: boolean;
   likelihood: number;
   impact: number;
   score: number;
@@ -5469,15 +5470,19 @@ function buildRiskBurndownProjection(risk: Risk, visiblePoints: RiskBurndownPoin
     return null;
   }
 
+  const now = new Date();
+  const dueDateTime = new Date(dueDate.normalizedDate).getTime();
+  const dueDatePassed = dueDateTime <= now.getTime();
   const projected = getResidualRating(risk.residualLikelihood, risk.residualImpact);
   return {
-    at: dueDate.normalizedDate,
+    at: dueDatePassed ? now.toISOString() : dueDate.normalizedDate,
     displayDate: dueDate.displayDate,
+    dueDatePassed,
     likelihood: risk.residualLikelihood,
     impact: risk.residualImpact,
     score: projected.score,
     severity: projected.severity,
-    label: 'Projected post-mitigation score',
+    label: dueDatePassed ? 'Projected post-mitigation score after due date' : 'Projected post-mitigation score',
   };
 }
 
@@ -6553,10 +6558,14 @@ function TrendsAnalyticsPage({
                       Likelihood {focusedBurndownSeries.projection.likelihood} / Impact {focusedBurndownSeries.projection.impact}
                     </div>
                     <div className="mt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
-                      Projected post-mitigation
+                      {focusedBurndownSeries.projection.dueDatePassed
+                        ? 'Projected post-mitigation, due date passed'
+                        : 'Projected post-mitigation'}
                     </div>
                     <div className="mt-2 text-sm leading-relaxed text-on-surface-variant">
-                      Based on the user-entered projected residual score and the latest mitigation action due date.
+                      {focusedBurndownSeries.projection.dueDatePassed
+                        ? 'The mitigation due date has passed, so the projected residual score is carried forward to today without changing the saved current score.'
+                        : 'Based on the user-entered projected residual score and the latest mitigation action due date.'}
                     </div>
                   </div>
                 ) : null}
@@ -11313,7 +11322,7 @@ function RiskBurndownChart({
         </div>
       ) : null}
       <div className="mt-3 text-xs leading-relaxed text-on-surface-variant">
-        Filled points indicate score changes that include rationale. Open points indicate baseline or carry-forward points. Dashed lines show the guestimated post-mitigation score based on the projected residual score and the latest mitigation action due date.
+        Filled points indicate score changes that include rationale. Open points indicate baseline or carry-forward points. Dashed lines show the guestimated post-mitigation score based on the projected residual score and the latest mitigation action due date. If that due date has passed, the dashed point is carried forward to today.
       </div>
     </div>
   );
