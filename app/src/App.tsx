@@ -3353,11 +3353,37 @@ export default function App() {
     );
     const nextActiveProject =
       reconciled.projects.find((project) => project.id === snapshot.activeProjectId) ?? reconciled.projects[0];
+    const nextSharedDecisions = snapshot.sharedLibrary?.decisions ?? [];
+    const nextRegistryName = sessionOverrides?.registryName ?? snapshot.registry?.name ?? 'Governance Register';
+    const nextBaseDocumentId = sessionOverrides?.baseDocumentId ?? snapshot.registry?.documentId ?? null;
+    const nextBaseRevision = sessionOverrides?.baseRevision ?? snapshot.registry?.revision ?? null;
+    const workspaceBaselineSnapshot = buildAppSnapshot(
+      reconciled.projects,
+      nextActiveProject.id,
+      reconciled.sharedRisks,
+      reconciled.sharedRiskSubscriptions,
+      nextSharedDecisions,
+      {
+        documentId: nextBaseDocumentId ?? undefined,
+        name: nextRegistryName,
+        revision: nextBaseRevision ?? undefined,
+        parentRevision: snapshot.registry?.parentRevision ?? null,
+        parentContentHash: snapshot.registry?.parentContentHash ?? null,
+        lastModifiedAt: snapshot.registry?.lastModifiedAt,
+        lastModifiedBy: snapshot.registry?.lastModifiedBy,
+      },
+    );
+    const cleanBaselineContentHash = workspaceBaselineSnapshot.registry?.contentHash ?? snapshot.registry?.contentHash ?? null;
+    const nextStatus = sessionOverrides?.status ?? 'master_loaded_clean';
+    const nextBaseContentHash =
+      nextStatus === 'master_loaded_clean' || !sessionOverrides?.baseContentHash
+        ? cleanBaselineContentHash
+        : sessionOverrides.baseContentHash;
 
     setProjects(reconciled.projects);
     setSharedRisks(reconciled.sharedRisks);
     setSharedRiskSubscriptions(reconciled.sharedRiskSubscriptions);
-    setSharedDecisions(snapshot.sharedLibrary?.decisions ?? []);
+    setSharedDecisions(nextSharedDecisions);
     setActiveProjectId(nextActiveProject.id);
     setSelectedRiskId(nextActiveProject.risks[0]?.id ?? '');
     setSelectedSharedRiskId('');
@@ -3369,14 +3395,14 @@ export default function App() {
     setRegistrySession({
       sourceLabel: sessionOverrides?.sourceLabel ?? 'Opened master registry',
       sourceFileName: sessionOverrides?.sourceFileName ?? '',
-      registryName: sessionOverrides?.registryName ?? snapshot.registry?.name ?? 'Governance Register',
-      baseDocumentId: sessionOverrides?.baseDocumentId ?? snapshot.registry?.documentId ?? null,
-      baseRevision: sessionOverrides?.baseRevision ?? snapshot.registry?.revision ?? null,
-      baseContentHash: sessionOverrides?.baseContentHash ?? snapshot.registry?.contentHash ?? null,
+      registryName: nextRegistryName,
+      baseDocumentId: nextBaseDocumentId,
+      baseRevision: nextBaseRevision,
+      baseContentHash: nextBaseContentHash,
       loadedAt: sessionOverrides?.loadedAt ?? new Date().toISOString(),
       lastPublishedAt: sessionOverrides?.lastPublishedAt ?? null,
       lastPublishedRevision: sessionOverrides?.lastPublishedRevision ?? null,
-      status: sessionOverrides?.status ?? 'master_loaded_clean',
+      status: nextStatus,
       lastError: sessionOverrides?.lastError ?? '',
     });
   }
@@ -5676,10 +5702,22 @@ function CreateRiskModal({
                       value={form.owner}
                     />
                     <button
+                      aria-expanded={ownerMenuOpen}
+                      aria-haspopup="listbox"
                       aria-label="Show previous owners"
                       className="absolute inset-y-1 right-1 flex w-9 items-center justify-center rounded-xl text-slate-500 transition hover:bg-white hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
                       disabled={!ownerSuggestions.length}
                       onClick={(event) => {
+                        event.preventDefault();
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') {
+                          return;
+                        }
+                        event.preventDefault();
+                        setOwnerMenuOpen((current) => !current);
+                      }}
+                      onMouseDown={(event) => {
                         event.preventDefault();
                         setOwnerMenuOpen((current) => !current);
                       }}
@@ -5688,7 +5726,10 @@ function CreateRiskModal({
                       <span className="material-symbols-outlined text-[20px]">expand_more</span>
                     </button>
                     {ownerMenuOpen && ownerSuggestions.length ? (
-                      <div className="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-[80] max-h-56 overflow-y-auto rounded-2xl border border-slate-200 bg-white py-2 shadow-[0_18px_45px_rgba(42,52,57,0.16)]">
+                      <div
+                        className="absolute left-0 right-0 top-[calc(100%+0.35rem)] z-[80] max-h-56 overflow-y-auto rounded-2xl border border-slate-200 bg-white py-2 shadow-[0_18px_45px_rgba(42,52,57,0.16)]"
+                        role="listbox"
+                      >
                         {ownerSuggestions.map((option) => (
                           <button
                             className={`block w-full px-4 py-2.5 text-left text-sm font-semibold transition hover:bg-slate-50 ${
@@ -5700,6 +5741,8 @@ function CreateRiskModal({
                               setForm((current) => ({...current, owner: option}));
                               setOwnerMenuOpen(false);
                             }}
+                            role="option"
+                            aria-selected={option === form.owner}
                             type="button"
                           >
                             {option}
@@ -7375,6 +7418,7 @@ function RiskRegisterPage({
   const [heatmapCopyError, setHeatmapCopyError] = useState('');
   const [heatmapExternalOnly, setHeatmapExternalOnly] = useState(false);
   const [heatmapHideLowRisks, setHeatmapHideLowRisks] = useState(false);
+  const [heatmapIncludePendingRisks, setHeatmapIncludePendingRisks] = useState(true);
   const [heatmapSettingsOpen, setHeatmapSettingsOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'All' | RiskStatus>('All');
   const [ownerFilter, setOwnerFilter] = useState('All');
@@ -7457,6 +7501,9 @@ function RiskRegisterPage({
     ? (openRisks.reduce((total, risk) => total + risk.likelihood * risk.impact, 0) / activeRisks).toFixed(1)
     : '0.0';
   const heatmapRisks = openRisks.filter((risk) => {
+    if (!heatmapIncludePendingRisks && risk.status === 'Pending') {
+      return false;
+    }
     if (heatmapExternalOnly && risk.internalOnly) {
       return false;
     }
@@ -7663,7 +7710,7 @@ function RiskRegisterPage({
                 aria-expanded={heatmapSettingsOpen}
                 aria-label="Display and export settings"
                 className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition ${
-                  heatmapSettingsOpen || heatmapExternalOnly || heatmapHideLowRisks
+                  heatmapSettingsOpen || heatmapExternalOnly || heatmapHideLowRisks || !heatmapIncludePendingRisks
                     ? 'bg-primary text-white shadow-sm'
                     : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                 }`}
@@ -7696,6 +7743,15 @@ function RiskRegisterPage({
                         Risk IDs
                       </button>
                     </div>
+                    <label className="mb-3 flex cursor-pointer items-center justify-between rounded-xl bg-slate-50 px-3 py-2 transition hover:bg-slate-100">
+                      <span className="text-[11px] font-semibold text-on-surface">Include pending risks</span>
+                      <input
+                        checked={heatmapIncludePendingRisks}
+                        className="h-3.5 w-3.5 accent-primary"
+                        onChange={(event) => setHeatmapIncludePendingRisks(event.target.checked)}
+                        type="checkbox"
+                      />
+                    </label>
                     <label className="mb-3 flex cursor-pointer items-center justify-between rounded-xl bg-slate-50 px-3 py-2 transition hover:bg-slate-100">
                       <span className="text-[11px] font-semibold text-on-surface">Hide internal-only risks</span>
                       <input
@@ -10036,6 +10092,34 @@ function RiskDrawer({
           : formatImpactRange(sharedRiskRecord.sharedImpactProfile.min, sharedRiskRecord.sharedImpactProfile.max, '', '$')
       }`
     : null;
+  const pendingScoreChangeContext = pendingScoreChange
+    ? (() => {
+        const fieldLabel = pendingScoreChange.field === 'likelihood' ? 'Likelihood' : 'Impact';
+        const definitions = pendingScoreChange.field === 'likelihood' ? scoringModel.likelihood : scoringModel.impact;
+        const oldValue = risk[pendingScoreChange.field];
+        const newValue = pendingScoreChange.value;
+        const oldLikelihood = risk.likelihood;
+        const oldImpact = risk.impact;
+        const nextLikelihood = pendingScoreChange.field === 'likelihood' ? newValue : risk.likelihood;
+        const nextImpact = pendingScoreChange.field === 'impact' ? newValue : risk.impact;
+        const oldRating = getResidualRating(oldLikelihood, oldImpact);
+        const nextRating = getResidualRating(nextLikelihood, nextImpact);
+
+        return {
+          fieldLabel,
+          oldValue,
+          newValue,
+          oldLabel: getScoreDefinition(definitions, oldValue)?.label ?? String(oldValue),
+          newLabel: getScoreDefinition(definitions, newValue)?.label ?? String(newValue),
+          oldLikelihood,
+          oldImpact,
+          nextLikelihood,
+          nextImpact,
+          oldRating,
+          nextRating,
+        };
+      })()
+    : null;
   return (
     <div
       className="fixed inset-0 z-50 bg-slate-950/10"
@@ -10072,6 +10156,29 @@ function RiskDrawer({
             <div className="mb-4 rounded-2xl bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-950">
               This score change will not be saved until you provide a rationale. Add the reason below or cancel the change.
             </div>
+
+            {pendingScoreChangeContext ? (
+              <div className="mb-4 grid gap-3 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm sm:grid-cols-2">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Current</div>
+                  <div className="mt-1 font-semibold text-on-surface">
+                    {pendingScoreChangeContext.fieldLabel} {pendingScoreChangeContext.oldValue} - {pendingScoreChangeContext.oldLabel}
+                  </div>
+                  <div className="mt-1 text-xs font-medium text-on-surface-variant">
+                    {pendingScoreChangeContext.oldLikelihood} x {pendingScoreChangeContext.oldImpact} = {pendingScoreChangeContext.oldRating.label}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-700">Proposed</div>
+                  <div className="mt-1 font-semibold text-on-surface">
+                    {pendingScoreChangeContext.fieldLabel} {pendingScoreChangeContext.newValue} - {pendingScoreChangeContext.newLabel}
+                  </div>
+                  <div className="mt-1 text-xs font-medium text-on-surface-variant">
+                    {pendingScoreChangeContext.nextLikelihood} x {pendingScoreChangeContext.nextImpact} = {pendingScoreChangeContext.nextRating.label}
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             <textarea
               autoFocus
