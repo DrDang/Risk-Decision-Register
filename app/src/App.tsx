@@ -228,6 +228,24 @@ type RecoveryDraft = {
   savedAt: string;
 };
 
+type BrowserWindowWithFilePickers = Window &
+  typeof globalThis & {
+    showOpenFilePicker?: (options?: {
+      multiple?: boolean;
+      types?: Array<{
+        description?: string;
+        accept: Record<string, string[]>;
+      }>;
+    }) => Promise<FileSystemFileHandle[]>;
+    showSaveFilePicker?: (options?: {
+      suggestedName?: string;
+      types?: Array<{
+        description?: string;
+        accept: Record<string, string[]>;
+      }>;
+    }) => Promise<FileSystemFileHandle>;
+  };
+
 const RISK_SCORING_STORAGE_KEY = 'risk-decision-register.scoring-model.v1';
 const PROJECTS_STORAGE_KEY = 'risk-decision-register.projects.v1';
 const ACTIVE_PROJECT_ID_KEY = 'risk-decision-register.active-project.v1';
@@ -3179,6 +3197,7 @@ export default function App() {
     lastError: '',
   }));
   const [recoveryDraft, setRecoveryDraft] = useState<RecoveryDraft | null>(() => loadRecoveryDraft());
+  const currentBoardFileHandleRef = useRef<FileSystemFileHandle | null>(null);
 
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? projects[0];
   const riskRecords = activeProject.risks;
@@ -3341,6 +3360,22 @@ export default function App() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [shouldWarnBeforeUnload]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key.toLowerCase() !== 's' || (!event.metaKey && !event.ctrlKey)) {
+        return;
+      }
+
+      event.preventDefault();
+      void handleSaveBoard().catch((error) => {
+        window.alert(error instanceof Error ? error.message : 'Save failed.');
+      });
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
 
   function applySnapshotToWorkspace(
     snapshot: AppSnapshot,
@@ -4439,8 +4474,9 @@ export default function App() {
     window.URL.revokeObjectURL(url);
   }
 
-  function handleOpenMasterSnapshot(source: string, fileName: string) {
+  function handleOpenMasterSnapshot(source: string, fileName: string, fileHandle?: FileSystemFileHandle | null) {
     const snapshot = parseAppSnapshot(source);
+    currentBoardFileHandleRef.current = fileHandle ?? null;
     applySnapshotToWorkspace(snapshot, {
       sourceLabel: 'Master registry',
       sourceFileName: fileName,
@@ -4466,6 +4502,7 @@ export default function App() {
       return;
     }
 
+    currentBoardFileHandleRef.current = null;
     const blankProject = createBlankProject({
       id: 'proj-new-board',
       name: 'New Project',
@@ -4501,6 +4538,7 @@ export default function App() {
       return 'No recovery draft is available.';
     }
 
+    currentBoardFileHandleRef.current = null;
     applySnapshotToWorkspace(recoveryDraft.snapshot, {
       ...recoveryDraft.session,
       status: recoveryDraft.session.baseDocumentId ? 'master_loaded_dirty' : 'recovery_draft_available',
@@ -4659,6 +4697,106 @@ export default function App() {
     return `Published a new board version as ${publishedFileName} using your local time. Share or store that JSON as the next board artifact.`;
   }
 
+  async function getWritableBoardFileHandle(suggestedName: string) {
+    if (currentBoardFileHandleRef.current) {
+      return currentBoardFileHandleRef.current;
+    }
+
+    const pickerWindow = window as BrowserWindowWithFilePickers;
+    if (!pickerWindow.showSaveFilePicker) {
+      return null;
+    }
+
+    const fileHandle = await pickerWindow.showSaveFilePicker({
+      suggestedName,
+      types: [
+        {
+          description: 'Governance board JSON',
+          accept: {'application/json': ['.json']},
+        },
+      ],
+    });
+    currentBoardFileHandleRef.current = fileHandle;
+    return fileHandle;
+  }
+
+  async function handleSaveBoard() {
+    if (
+      !registrySession.baseDocumentId ||
+      registrySession.baseRevision == null ||
+      !registrySession.baseContentHash
+    ) {
+      throw new Error('Open or start a board before saving.');
+    }
+
+    if (!hasUnsavedChanges) {
+      return 'Board already saved.';
+    }
+
+    const savedAt = new Date().toISOString();
+    const savedBy = editorName.trim() || 'Browser workspace';
+    const nextRevision = registrySession.baseRevision + 1;
+    const savedSnapshot = buildAppSnapshot(
+      projects,
+      activeProjectId,
+      sharedRisks,
+      sharedRiskSubscriptions,
+      sharedDecisions,
+      {
+        documentId: registrySession.baseDocumentId,
+        name: registrySession.registryName,
+        revision: nextRevision,
+        parentRevision: registrySession.baseRevision,
+        parentContentHash: registrySession.baseContentHash,
+        lastModifiedAt: savedAt,
+        lastModifiedBy: savedBy,
+      },
+    );
+
+    const fallbackName =
+      registrySession.sourceFileName ||
+      `${sanitizeFileStem(registrySession.registryName)}_${getLocalFileTimestamp(new Date(savedAt))}.json`;
+    const fileHandle = await getWritableBoardFileHandle(fallbackName);
+
+    if (!fileHandle) {
+      downloadSnapshot(savedSnapshot, fallbackName);
+      applySnapshotToWorkspace(savedSnapshot, {
+        sourceLabel: 'Downloaded board file',
+        sourceFileName: fallbackName,
+        registryName: savedSnapshot.registry?.name ?? registrySession.registryName,
+        baseDocumentId: savedSnapshot.registry?.documentId ?? registrySession.baseDocumentId,
+        baseRevision: savedSnapshot.registry?.revision ?? nextRevision,
+        baseContentHash: savedSnapshot.registry?.contentHash ?? null,
+        loadedAt: savedAt,
+        lastPublishedAt: savedAt,
+        lastPublishedRevision: nextRevision,
+        status: 'master_loaded_clean',
+        lastError: '',
+      });
+      return `Saved by downloading ${fallbackName}. Your browser does not allow direct overwrite of the opened file.`;
+    }
+
+    const writable = await fileHandle.createWritable();
+    await writable.write(JSON.stringify(savedSnapshot, null, 2));
+    await writable.close();
+
+    applySnapshotToWorkspace(savedSnapshot, {
+      sourceLabel: 'Master registry',
+      sourceFileName: fileHandle.name,
+      registryName: savedSnapshot.registry?.name ?? registrySession.registryName,
+      baseDocumentId: savedSnapshot.registry?.documentId ?? registrySession.baseDocumentId,
+      baseRevision: savedSnapshot.registry?.revision ?? nextRevision,
+      baseContentHash: savedSnapshot.registry?.contentHash ?? null,
+      loadedAt: savedAt,
+      lastPublishedAt: savedAt,
+      lastPublishedRevision: nextRevision,
+      status: 'master_loaded_clean',
+      lastError: '',
+    });
+
+    return `Saved ${fileHandle.name}.`;
+  }
+
   return (
     <div className="min-h-screen bg-surface text-on-surface font-body">
       <div className="flex min-h-screen">
@@ -4695,6 +4833,11 @@ export default function App() {
                   window.alert(error instanceof Error ? error.message : 'Publish failed.');
                 }
               }}
+              onSaveBoard={() => {
+                void handleSaveBoard()
+                  .then((message) => window.alert(message))
+                  .catch((error) => window.alert(error instanceof Error ? error.message : 'Save failed.'));
+              }}
               onPrimaryAction={() => {
                 if (!boardLoaded) {
                   setView('snapshot');
@@ -4719,6 +4862,7 @@ export default function App() {
                 onAcknowledgeSharedRisk={handleAcknowledgeSharedRiskReview}
                 onMarkSharedRiskNotApplicable={handleMarkSharedRiskNotApplicable}
                 onShowDecision={handleSelectDecision}
+                onCreateRisk={() => setCreateRiskOpen(true)}
                 scoringModel={riskScoringModel}
                 decisions={decisions}
               />
@@ -4765,6 +4909,7 @@ export default function App() {
                 onOpenMasterSnapshot={handleOpenMasterSnapshot}
                 onStartNewBoard={handleStartNewBoard}
                 onPublishBoard={handlePublishBoard}
+                onSaveBoard={handleSaveBoard}
                 onExportReadOnlyBoard={handleRequestReadOnlyBoardExport}
                 onRestoreRecoveryDraft={handleRestoreRecoveryDraft}
                 onDiscardRecoveryDraft={handleDiscardRecoveryDraft}
@@ -5262,6 +5407,7 @@ function TopNav({
   hasUnsavedChanges,
   onExportReadOnlyBoard,
   onPublishBoard,
+  onSaveBoard,
 }: {
   view: View;
   onPrimaryAction?: () => void;
@@ -5270,6 +5416,7 @@ function TopNav({
   hasUnsavedChanges: boolean;
   onExportReadOnlyBoard: () => void;
   onPublishBoard: () => void;
+  onSaveBoard: () => void;
 }) {
   const showPrimaryAction = view === 'risk' || view === 'decision';
   const [helpOpen, setHelpOpen] = useState(false);
@@ -5319,7 +5466,7 @@ function TopNav({
                 {hasUnsavedChanges ? 'Unpublished changes' : 'Board up to date'}
               </div>
               <div className="text-xs text-slate-500">
-                {hasUnsavedChanges ? 'Publish to save a new board version' : 'Publish again after your next edits'}
+                {hasUnsavedChanges ? 'Ctrl+S saves the current board file' : 'Ready for your next edits'}
               </div>
             </div>
           ) : null}
@@ -5356,6 +5503,18 @@ function TopNav({
                   className="absolute right-0 top-[calc(100%+0.5rem)] z-40 min-w-[220px] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_20px_60px_rgba(42,52,57,0.16)]"
                   role="menu"
                 >
+                  <button
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-on-surface transition hover:bg-slate-50"
+                    onClick={() => {
+                      setPublishMenuOpen(false);
+                      onSaveBoard();
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[18px] text-primary">save</span>
+                    <span>Save Current File</span>
+                  </button>
                   <button
                     className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-on-surface transition hover:bg-slate-50"
                     onClick={() => {
@@ -7105,6 +7264,7 @@ function SnapshotPage({
   onOpenMasterSnapshot,
   onStartNewBoard,
   onPublishBoard,
+  onSaveBoard,
   onExportReadOnlyBoard,
   onRestoreRecoveryDraft,
   onDiscardRecoveryDraft,
@@ -7115,9 +7275,10 @@ function SnapshotPage({
 }: {
   activeProjectName: string;
   projectCount: number;
-  onOpenMasterSnapshot: (source: string, fileName: string) => string;
+  onOpenMasterSnapshot: (source: string, fileName: string, fileHandle?: FileSystemFileHandle | null) => string;
   onStartNewBoard: () => void;
   onPublishBoard: () => string;
+  onSaveBoard: () => Promise<string>;
   onExportReadOnlyBoard: () => void;
   onRestoreRecoveryDraft: () => string;
   onDiscardRecoveryDraft: () => string;
@@ -7164,6 +7325,45 @@ function SnapshotPage({
     }
   }
 
+  async function handleOpenBoardClick() {
+    const pickerWindow = window as BrowserWindowWithFilePickers;
+    if (!pickerWindow.showOpenFilePicker) {
+      openMasterFileRef.current?.click();
+      return;
+    }
+
+    try {
+      const [fileHandle] = await pickerWindow.showOpenFilePicker({
+        multiple: false,
+        types: [
+          {
+            description: 'Governance board JSON',
+            accept: {'application/json': ['.json']},
+          },
+        ],
+      });
+      if (!fileHandle) {
+        return;
+      }
+
+      const file = await fileHandle.getFile();
+      const contents = await file.text();
+      const message = onOpenMasterSnapshot(contents, file.name, fileHandle);
+      setSnapshotStatus({
+        tone: 'success',
+        message,
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return;
+      }
+      setSnapshotStatus({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Registry action failed.',
+      });
+    }
+  }
+
   return (
     <div className="mx-auto w-full max-w-[1500px] px-8 py-8">
       <input
@@ -7196,7 +7396,7 @@ function SnapshotPage({
           <div className="grid gap-6 md:grid-cols-2">
             <button
               className="rounded-[2rem] bg-white p-8 text-left shadow-[0_14px_40px_rgba(42,52,57,0.06)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_50px_rgba(42,52,57,0.10)]"
-              onClick={() => openMasterFileRef.current?.click()}
+              onClick={() => void handleOpenBoardClick()}
               type="button"
             >
               <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -7275,10 +7475,27 @@ function SnapshotPage({
             <div className="mt-5 flex flex-wrap gap-2">
               <button
                 className="rounded-xl bg-gradient-to-br from-primary to-primary-dim px-4 py-2.5 text-sm font-bold text-on-primary shadow-lg shadow-primary/20 transition hover:opacity-90"
-                onClick={() => openMasterFileRef.current?.click()}
+                onClick={() => void handleOpenBoardClick()}
                 type="button"
               >
                 Open Board
+              </button>
+              <button
+                className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-on-surface ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!registrySession.baseDocumentId || !hasUnsavedChanges}
+                onClick={() => {
+                  void onSaveBoard()
+                    .then((message) => setSnapshotStatus({tone: 'success', message}))
+                    .catch((error) =>
+                      setSnapshotStatus({
+                        tone: 'error',
+                        message: error instanceof Error ? error.message : 'Save failed.',
+                      }),
+                    );
+                }}
+                type="button"
+              >
+                Save
               </button>
               <button
                 className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-on-surface ring-1 ring-slate-200 transition hover:bg-slate-50"
@@ -7393,6 +7610,7 @@ function RiskRegisterPage({
   onAcknowledgeSharedRisk,
   onMarkSharedRiskNotApplicable,
   onShowDecision,
+  onCreateRisk,
   scoringModel,
   decisions,
 }: {
@@ -7409,6 +7627,7 @@ function RiskRegisterPage({
   onAcknowledgeSharedRisk: (sharedRiskId: string, comment: string) => void;
   onMarkSharedRiskNotApplicable: (sharedRiskId: string) => void;
   onShowDecision: (decisionId: string) => void;
+  onCreateRisk: () => void;
   scoringModel: RiskScoringModel;
   decisions: Decision[];
 }) {
@@ -7975,11 +8194,22 @@ function RiskRegisterPage({
           </div>
           <div className="flex gap-2">
             <button
-              className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-              onClick={handleDownloadCurrentRisks}
+              aria-label="Add risk"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-on-primary transition hover:bg-primary-dim"
+              onClick={onCreateRisk}
+              title="Add risk"
               type="button"
             >
-              <span className="material-symbols-outlined">download</span>
+              <span className="material-symbols-outlined text-[19px]">add</span>
+            </button>
+            <button
+              aria-label="Download current risks"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition hover:bg-slate-200 hover:text-slate-900"
+              onClick={handleDownloadCurrentRisks}
+              title="Download current risks"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-[19px]">download</span>
             </button>
           </div>
         </div>
@@ -7991,6 +8221,14 @@ function RiskRegisterPage({
               <div className="mx-auto mt-2 max-w-2xl text-sm leading-relaxed text-on-surface-variant">
                 Start by logging a new risk, or go to `Registry Source` to open the current board file or import a JSON file before you begin working.
               </div>
+              <button
+                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-on-primary transition hover:bg-primary-dim"
+                onClick={onCreateRisk}
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[18px]">add</span>
+                Add Risk
+              </button>
             </div>
           </div>
         ) : (
