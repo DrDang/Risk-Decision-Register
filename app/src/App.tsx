@@ -15,6 +15,8 @@ type MitigationAction = {
   owner: string;
   dueDate: string;
   status: 'Not Started' | 'In Progress' | 'Done' | 'Blocked';
+  projectedLikelihood: number;
+  projectedImpact: number;
 };
 
 type Risk = {
@@ -1447,6 +1449,7 @@ type RiskBurndownProjection = {
   at: string;
   displayDate: string;
   dueDatePassed: boolean;
+  isOverdue: boolean;
   likelihood: number;
   impact: number;
   score: number;
@@ -1457,6 +1460,14 @@ type RiskBurndownProjection = {
 type SelectedBurndownPoint = {
   riskId: string;
   at: string;
+};
+
+type MitigationActionDraft = {
+  title: string;
+  owner: string;
+  dueDate: string;
+  projectedLikelihood: string;
+  projectedImpact: string;
 };
 
 function formatDisplayDate(value: string) {
@@ -1610,6 +1621,38 @@ function getBurndownRangeStart(timeframe: BurndownTimeframe) {
   return boundary;
 }
 
+function carryForwardCurrentRiskToToday(risk: Risk, points: RiskBurndownPoint[]) {
+  if (isRetiredRiskStatus(risk.status) || points.length === 0) {
+    return points;
+  }
+
+  const now = new Date();
+  const latestPoint = [...points].sort((left, right) => new Date(right.at).getTime() - new Date(left.at).getTime())[0];
+  const latestPointDate = new Date(latestPoint.at);
+
+  if (
+    Number.isNaN(latestPointDate.getTime()) ||
+    latestPointDate.getTime() >= now.getTime() ||
+    latestPointDate.toDateString() === now.toDateString()
+  ) {
+    return points;
+  }
+
+  return [
+    ...points,
+    {
+      at: now.toISOString(),
+      likelihood: risk.likelihood,
+      impact: risk.impact,
+      score: risk.likelihood * risk.impact,
+      severity: getSeverityFromAssessment(risk.likelihood, risk.impact),
+      label: 'Current score',
+      rationale: '',
+      source: 'current' as const,
+    },
+  ].sort((left, right) => new Date(left.at).getTime() - new Date(right.at).getTime());
+}
+
 function filterBurndownPoints(points: RiskBurndownPoint[], timeframe: BurndownTimeframe) {
   const boundary = getBurndownRangeStart(timeframe);
   if (!boundary || points.length === 0) {
@@ -1708,6 +1751,30 @@ function getProjectionDueDateFromMitigation(risk: Pick<Risk, 'dueDate' | 'mitiga
   return fallbackDueDate ? {displayDate: risk.dueDate, normalizedDate: fallbackDueDate} : null;
 }
 
+function getFinalMitigationActionProjection(actions: MitigationAction[]) {
+  if (actions.length === 0) {
+    return null;
+  }
+
+  const latestDatedAction = actions
+    .map((action, index) => ({
+      action,
+      index,
+      normalizedDate: normalizeProjectionDueDate(action.dueDate),
+    }))
+    .filter((entry): entry is {action: MitigationAction; index: number; normalizedDate: string} => Boolean(entry.normalizedDate))
+    .sort((left, right) => {
+      const dateDifference = new Date(right.normalizedDate).getTime() - new Date(left.normalizedDate).getTime();
+      return dateDifference || right.index - left.index;
+    })[0]?.action;
+
+  const finalAction = latestDatedAction ?? actions[actions.length - 1];
+  return {
+    likelihood: finalAction.projectedLikelihood,
+    impact: finalAction.projectedImpact,
+  };
+}
+
 function normalizeBurndownTimestamp(value: string | undefined, fallback: string) {
   if (!value) {
     return fallback;
@@ -1785,7 +1852,20 @@ function normalizeRiskComments(value: unknown): RiskComment[] {
     .filter((entry): entry is RiskComment => Boolean(entry));
 }
 
-function normalizeMitigationActions(value: unknown): MitigationAction[] {
+function normalizeScoreValue(value: unknown, fallback: number) {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(Math.round(parsed), 1), 5);
+}
+
+function normalizeMitigationActions(
+  value: unknown,
+  fallbackLikelihood = 3,
+  fallbackImpact = 3,
+): MitigationAction[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -1813,6 +1893,8 @@ function normalizeMitigationActions(value: unknown): MitigationAction[] {
         owner: typeof record.owner === 'string' ? record.owner : '',
         dueDate: typeof record.dueDate === 'string' ? record.dueDate : '',
         status,
+        projectedLikelihood: normalizeScoreValue(record.projectedLikelihood, fallbackLikelihood),
+        projectedImpact: normalizeScoreValue(record.projectedImpact, fallbackImpact),
       };
     })
     .filter((entry): entry is MitigationAction => Boolean(entry));
@@ -2503,7 +2585,7 @@ function normalizeRiskRecord(
     lastUpdated: inferredLastUpdated,
     dueDate: typeof input.dueDate === 'string' ? input.dueDate : '',
     mitigation: typeof input.mitigation === 'string' ? input.mitigation : '',
-    mitigationActions: normalizeMitigationActions(input.mitigationActions),
+    mitigationActions: normalizeMitigationActions(input.mitigationActions, residualLikelihood, residualImpact),
     contingency: typeof input.contingency === 'string' ? input.contingency : '',
     linkedDecision: typeof input.linkedDecision === 'string' ? input.linkedDecision : 'None',
     comments,
@@ -4811,8 +4893,8 @@ export default function App() {
           onCreateProject={handleCreateProject}
           onUpdateProject={handleUpdateProject}
         />
-        <div className="flex min-h-screen flex-1 pl-64">
-          <main className={`flex min-h-screen flex-1 flex-col ${view === 'risk' && drawerOpen ? 'pr-[29rem]' : ''}`}>
+        <div className="flex min-h-screen min-w-0 flex-1 pl-64">
+          <main className={`flex min-h-screen min-w-0 flex-1 flex-col ${view === 'risk' && drawerOpen ? 'pr-[29rem]' : ''}`}>
             <TopNav
               view={view}
               projectName={activeProject.name}
@@ -5440,7 +5522,7 @@ function TopNav({
 
   return (
     <>
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200/70 bg-slate-50/90 px-8 backdrop-blur-xl">
+      <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-slate-200/70 bg-slate-50/90 px-4 backdrop-blur-xl lg:px-8">
         <div className="min-w-0">
           <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">
             {view === 'risk'
@@ -5658,16 +5740,20 @@ function buildRiskBurndownProjection(risk: Risk, visiblePoints: RiskBurndownPoin
   const now = new Date();
   const dueDateTime = new Date(dueDate.normalizedDate).getTime();
   const dueDatePassed = dueDateTime <= now.getTime();
-  const projected = getResidualRating(risk.residualLikelihood, risk.residualImpact);
+  const actionProjection = getFinalMitigationActionProjection(risk.mitigationActions);
+  const projectedLikelihood = actionProjection?.likelihood ?? risk.residualLikelihood;
+  const projectedImpact = actionProjection?.impact ?? risk.residualImpact;
+  const projected = getResidualRating(projectedLikelihood, projectedImpact);
   return {
-    at: dueDatePassed ? now.toISOString() : dueDate.normalizedDate,
+    at: dueDate.normalizedDate,
     displayDate: dueDate.displayDate,
     dueDatePassed,
-    likelihood: risk.residualLikelihood,
-    impact: risk.residualImpact,
+    isOverdue: dueDatePassed,
+    likelihood: projectedLikelihood,
+    impact: projectedImpact,
     score: projected.score,
     severity: projected.severity,
-    label: dueDatePassed ? 'Projected post-mitigation score after due date' : 'Projected post-mitigation score',
+    label: dueDatePassed ? 'Missed projected post-mitigation score' : 'Projected post-mitigation score',
   };
 }
 
@@ -5768,8 +5854,6 @@ function CreateRiskModal({
   const generatedStatement = buildRiskStatement(form.trigger, form.consequence);
   const scorePreview = Number(form.likelihood) * Number(form.impact);
   const severityPreview = getSeverityFromAssessment(Number(form.likelihood), Number(form.impact));
-  const likelihoodDefinition = getScoreDefinition(scoringModel.likelihood, Number(form.likelihood));
-  const impactDefinition = getScoreDefinition(scoringModel.impact, Number(form.impact));
   const missingFields = [
     !form.id.trim() ? 'Risk ID' : null,
     !form.title.trim() ? 'Risk title' : null,
@@ -5925,40 +6009,20 @@ function CreateRiskModal({
                   </select>
                 </FormField>
                 <FormField label="Likelihood">
-                  <select
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
-                    onChange={(event) => setForm((current) => ({...current, likelihood: event.target.value}))}
+                  <ScoreDefinitionPicker
+                    definitions={scoringModel.likelihood}
+                    fieldLabel="Likelihood"
                     value={form.likelihood}
-                  >
-                    {toScoreSelectOptions(scoringModel.likelihood).map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  {likelihoodDefinition ? (
-                    <div className="mt-2 text-xs text-on-surface-variant">
-                      Likelihood {likelihoodDefinition.value} - {likelihoodDefinition.label}: {likelihoodDefinition.description}
-                    </div>
-                  ) : null}
+                    onChange={(value) => setForm((current) => ({...current, likelihood: value}))}
+                  />
                 </FormField>
                 <FormField label="Impact">
-                  <select
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
-                    onChange={(event) => setForm((current) => ({...current, impact: event.target.value}))}
+                  <ScoreDefinitionPicker
+                    definitions={scoringModel.impact}
+                    fieldLabel="Impact"
                     value={form.impact}
-                  >
-                    {toScoreSelectOptions(scoringModel.impact).map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  {impactDefinition ? (
-                    <div className="mt-2 text-xs text-on-surface-variant">
-                      Impact {impactDefinition.value} - {impactDefinition.label}: {impactDefinition.description}
-                    </div>
-                  ) : null}
+                    onChange={(value) => setForm((current) => ({...current, impact: value}))}
+                  />
                 </FormField>
                 <FormField label="Response">
                   <select
@@ -6100,6 +6164,151 @@ function CreateRiskModal({
   );
 }
 
+function ScoreDefinitionPicker({
+  definitions,
+  fieldLabel,
+  value,
+  onChange,
+}: {
+  definitions: ScoreDefinition[];
+  fieldLabel: 'Likelihood' | 'Impact';
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [previewValue, setPreviewValue] = useState<string | null>(null);
+  const selectedDefinition = getScoreDefinition(definitions, Number(value)) ?? definitions[0];
+  const previewDefinition = getScoreDefinition(definitions, Number(previewValue ?? value)) ?? selectedDefinition;
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        setPreviewValue(null);
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={pickerRef}>
+      <button
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm text-on-surface outline-none transition hover:border-primary/20 hover:bg-white focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
+        onClick={() => {
+          setOpen(true);
+          setPreviewValue(value);
+        }}
+        type="button"
+      >
+        <span className="min-w-0 font-semibold">
+          {selectedDefinition ? `${selectedDefinition.value} - ${selectedDefinition.label}` : value}
+        </span>
+        <span className="material-symbols-outlined text-[19px] text-slate-500">edit_square</span>
+      </button>
+
+      {open ? (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/10 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setOpen(false);
+              setPreviewValue(null);
+            }
+          }}
+        >
+          <div
+            aria-label={`Select ${fieldLabel} score`}
+            aria-modal="true"
+            className="flex max-h-[min(38rem,calc(100vh-3rem))] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_70px_rgba(42,52,57,0.22)]"
+            role="dialog"
+          >
+            <div className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-primary">{fieldLabel} Score</div>
+                <div className="mt-1 text-lg font-extrabold text-on-surface">Select {fieldLabel.toLowerCase()}</div>
+              </div>
+              <button
+                aria-label={`Close ${fieldLabel} score picker`}
+                className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+                onClick={() => {
+                  setOpen(false);
+                  setPreviewValue(null);
+                }}
+                type="button"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="grid min-h-0 flex-1 overflow-hidden md:grid-cols-[minmax(12rem,0.75fr)_minmax(0,1.25fr)]">
+              <div className="overflow-y-auto border-b border-slate-200 py-2 md:border-b-0 md:border-r" role="listbox">
+                {definitions.map((definition) => {
+                  const optionValue = String(definition.value);
+                  const selected = optionValue === value;
+                  const previewed = optionValue === (previewValue ?? value);
+                  return (
+                    <button
+                      aria-selected={selected}
+                      className={`block w-full px-5 py-3 text-left text-base transition ${
+                        selected
+                          ? 'bg-primary/10 font-extrabold text-primary'
+                          : previewed
+                            ? 'bg-slate-50 font-bold text-on-surface'
+                            : 'font-semibold text-on-surface hover:bg-slate-50'
+                      }`}
+                      key={definition.value}
+                      onClick={() => {
+                        onChange(optionValue);
+                        setPreviewValue(optionValue);
+                        setOpen(false);
+                      }}
+                      onFocus={() => setPreviewValue(optionValue)}
+                      onMouseEnter={() => setPreviewValue(optionValue)}
+                      role="option"
+                      type="button"
+                    >
+                      {definition.value} - {definition.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="min-h-[15rem] overflow-y-auto bg-slate-50 px-5 py-4">
+                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                  {fieldLabel} Definition
+                </div>
+                {previewDefinition ? (
+                  <>
+                    <div className="mt-3 text-xl font-extrabold text-on-surface">
+                      {previewDefinition.value} - {previewDefinition.label}
+                    </div>
+                    <div className="mt-3 text-sm leading-relaxed text-on-surface-variant">
+                      {previewDefinition.description}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {selectedDefinition ? (
+        <div className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-xs leading-relaxed text-on-surface-variant ring-1 ring-slate-200/70">
+          <span className="font-bold text-on-surface">{fieldLabel} {selectedDefinition.value} - {selectedDefinition.label}:</span>{' '}
+          {selectedDefinition.description}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 function SettingsPage({
   scoringModel,
   onSaveScoringModel,
@@ -6152,7 +6361,7 @@ function SettingsPage({
   const isDirty = JSON.stringify(draftModel) !== JSON.stringify(scoringModel);
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] px-8 py-8">
+    <div className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <div className="mb-8 flex items-end justify-between gap-6">
         <div>
           <h1 className="font-headline text-4xl font-extrabold tracking-tight text-on-surface">Settings</h1>
@@ -6282,11 +6491,19 @@ function TrendsAnalyticsPage({
   const burndownSeries = burndownRiskOptions
     .filter((risk) => selectedBurndownRiskIds.includes(risk.id))
     .map((risk) => {
-      const points = filterBurndownPoints(buildRiskBurndownTimeline(risk), burndownTimeframe);
+      const points = filterBurndownPoints(carryForwardCurrentRiskToToday(risk, buildRiskBurndownTimeline(risk)), burndownTimeframe);
+      const projection = showProjectedMitigation ? buildRiskBurndownProjection(risk, points) : null;
+      const rangeStart = getBurndownRangeStart(burndownTimeframe);
+      const visibleProjection =
+        projection &&
+        (!projection.isOverdue || !rangeStart || new Date(projection.at).getTime() >= rangeStart.getTime())
+          ? projection
+          : null;
+
       return {
         risk,
         points,
-        projection: showProjectedMitigation ? buildRiskBurndownProjection(risk, points) : null,
+        projection: visibleProjection,
       };
     });
   const projectedMitigationCount = burndownSeries.filter((series) => series.projection).length;
@@ -6462,7 +6679,7 @@ function TrendsAnalyticsPage({
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] px-8 py-8">
+    <div className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <div className="mb-8 flex items-end justify-between gap-6">
         <div>
           <h1 className="font-headline text-4xl font-extrabold tracking-tight text-on-surface">
@@ -6719,38 +6936,57 @@ function TrendsAnalyticsPage({
                   const selected =
                     selectedBurndownPoint?.riskId === focusedBurndownSeries.risk.id &&
                     selectedBurndownPoint.at === point.at;
+                  const isCurrentPoint = point.source === 'current' && point.label === 'Current score';
                   return (
                     <button
                       key={`${focusedBurndownSeries.risk.id}-${point.at}`}
                       className={`w-[220px] shrink-0 rounded-2xl border px-4 py-3 text-left transition ${
                         selected
                           ? 'border-primary bg-primary/5 shadow-[0_8px_24px_rgba(79,94,126,0.14)]'
-                          : 'border-slate-200 bg-white hover:border-primary/30 hover:bg-slate-50'
+                          : isCurrentPoint
+                            ? 'border-teal-200 bg-teal-50 hover:border-teal-300'
+                            : 'border-slate-200 bg-white hover:border-primary/30 hover:bg-slate-50'
                       }`}
                       onClick={() => setSelectedBurndownPoint({riskId: focusedBurndownSeries.risk.id, at: point.at})}
                       type="button"
                     >
-                      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                        {formatHistoryTimestamp(point.at)}
+                      <div className={`text-[10px] font-bold uppercase tracking-[0.18em] ${isCurrentPoint ? 'text-teal-700' : 'text-slate-500'}`}>
+                        {isCurrentPoint ? 'Today' : formatHistoryTimestamp(point.at)}
                       </div>
+                      {isCurrentPoint ? (
+                        <div className="mt-2 inline-flex rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-teal-800">Current state</div>
+                      ) : null}
                       <div className="mt-2 text-base font-extrabold text-on-surface">
                         {point.score}
                       </div>
                       <div className="mt-1 text-sm font-semibold text-on-surface">
                         Likelihood {point.likelihood} / Impact {point.impact}
                       </div>
-                      <div className="mt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                      <div className={`mt-2 text-[11px] font-bold uppercase tracking-[0.12em] ${isCurrentPoint ? 'text-teal-700' : 'text-slate-500'}`}>
                         {point.label}
                       </div>
                       <div className="mt-2 line-clamp-4 text-sm leading-relaxed text-on-surface-variant">
-                        {point.rationale || 'No rationale recorded for this point.'}
+                        {isCurrentPoint ? 'Current saved score carried forward to today.' : point.rationale || 'No rationale recorded for this point.'}
                       </div>
                     </button>
                   );
                 })}
                 {focusedBurndownSeries.projection ? (
-                  <div className="w-[220px] shrink-0 rounded-2xl border border-dashed border-primary/50 bg-white px-4 py-3 text-left">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                  <div
+                    className={`w-[220px] shrink-0 rounded-2xl border border-dashed px-4 py-3 text-left ${
+                      focusedBurndownSeries.projection.isOverdue
+                        ? 'border-amber-300 bg-amber-50'
+                        : 'border-primary/50 bg-primary/5'
+                    }`}
+                  >
+                    <div
+                      className={`text-[10px] font-bold uppercase tracking-[0.18em] ${
+                        focusedBurndownSeries.projection.isOverdue ? 'text-amber-700' : 'text-primary'
+                      }`}
+                    >
+                      {focusedBurndownSeries.projection.isOverdue ? 'Missed due date' : 'Projected date'}
+                    </div>
+                    <div className="mt-1 text-xs font-semibold text-on-surface-variant">
                       {formatDisplayDate(focusedBurndownSeries.projection.displayDate)}
                     </div>
                     <div className="mt-2 text-base font-extrabold text-on-surface">
@@ -6759,14 +6995,18 @@ function TrendsAnalyticsPage({
                     <div className="mt-1 text-sm font-semibold text-on-surface">
                       Likelihood {focusedBurndownSeries.projection.likelihood} / Impact {focusedBurndownSeries.projection.impact}
                     </div>
-                    <div className="mt-2 text-[11px] font-bold uppercase tracking-[0.12em] text-primary">
-                      {focusedBurndownSeries.projection.dueDatePassed
-                        ? 'Projected post-mitigation, due date passed'
+                    <div
+                      className={`mt-2 text-[11px] font-bold uppercase tracking-[0.12em] ${
+                        focusedBurndownSeries.projection.isOverdue ? 'text-amber-700' : 'text-primary'
+                      }`}
+                    >
+                      {focusedBurndownSeries.projection.isOverdue
+                        ? 'Missed projected score'
                         : 'Projected post-mitigation'}
                     </div>
                     <div className="mt-2 text-sm leading-relaxed text-on-surface-variant">
-                      {focusedBurndownSeries.projection.dueDatePassed
-                        ? 'The mitigation due date has passed, so the projected residual score is carried forward to today without changing the saved current score.'
+                      {focusedBurndownSeries.projection.isOverdue
+                        ? 'This projected residual score was due in the past. It is shown at the missed due date and is not treated as today\'s current score.'
                         : 'Based on the user-entered projected residual score and the latest mitigation action due date.'}
                     </div>
                   </div>
@@ -7365,7 +7605,7 @@ function SnapshotPage({
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] px-8 py-8">
+    <div className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <input
         accept=".json,application/json,text/plain"
         className="hidden"
@@ -7867,7 +8107,7 @@ function RiskRegisterPage({
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1500px] px-8 py-8">
+    <div className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
       <div className="mb-8 flex items-end justify-between gap-6">
         <div>
           <h1 className="font-headline text-4xl font-extrabold tracking-tight text-on-surface">
@@ -7885,8 +8125,8 @@ function RiskRegisterPage({
       </div>
 
       <section className="mb-5">
-        <div className="grid gap-4 xl:grid-cols-3">
-          <div className="rounded-3xl bg-white px-5 py-4 shadow-[0_12px_34px_rgba(42,52,57,0.05)]">
+        <div className="grid min-w-0 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+          <div className="min-w-0 rounded-3xl bg-white px-5 py-4 shadow-[0_12px_34px_rgba(42,52,57,0.05)]">
             <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Register Snapshot</div>
             <div className="grid grid-cols-2 gap-3">
               <SummaryMetricCard label="Active Risks" tone="text-on-surface" value={String(activeRisks)} />
@@ -7896,7 +8136,7 @@ function RiskRegisterPage({
             </div>
           </div>
 
-          <div className="rounded-3xl bg-white px-5 py-4 shadow-[0_12px_34px_rgba(42,52,57,0.05)]">
+          <div className="min-w-0 rounded-3xl bg-white px-5 py-4 shadow-[0_12px_34px_rgba(42,52,57,0.05)]">
             <div className="mb-4 text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">Severity Breakdown</div>
             <SeverityBreakdownChart
               bars={[
@@ -7907,7 +8147,7 @@ function RiskRegisterPage({
             />
           </div>
 
-          <div className="relative rounded-3xl bg-white px-5 py-4 shadow-[0_12px_34px_rgba(42,52,57,0.05)]">
+          <div className="relative min-w-0 rounded-3xl bg-white px-5 py-4 shadow-[0_12px_34px_rgba(42,52,57,0.05)]">
             <div className="mb-3">
               <div className="text-[11px] font-bold uppercase tracking-[0.22em] text-slate-500">
                 Risk Distribution Heatmap
@@ -8011,7 +8251,7 @@ function RiskRegisterPage({
                   </div>
                 ) : null}
             </div>
-            <div className="rounded-2xl bg-white">
+            <div className="mx-auto w-full max-w-[520px] rounded-2xl bg-white">
               <Heatmap
                 selectedCell={selectedHeatmapCell}
                 riskMap={heatmapRiskMap}
@@ -9961,7 +10201,8 @@ function RiskDrawer({
   const [commentDraft, setCommentDraft] = useState('');
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [commentEditDraft, setCommentEditDraft] = useState('');
-  const [actionDraft, setActionDraft] = useState({title: '', owner: '', dueDate: ''});
+  const [actionDraft, setActionDraft] = useState<MitigationActionDraft>(() => getDefaultActionDraft());
+  const [pendingDeleteActionId, setPendingDeleteActionId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editingRiskId, setEditingRiskId] = useState(false);
   const [editingRiskTitle, setEditingRiskTitle] = useState(false);
@@ -9969,7 +10210,6 @@ function RiskDrawer({
   const [riskTitleDraft, setRiskTitleDraft] = useState(risk.title);
   const [riskIdError, setRiskIdError] = useState('');
   const [historyExpanded, setHistoryExpanded] = useState(false);
-  const [projectedResidualOpen, setProjectedResidualOpen] = useState(false);
   const [mitigationActionsOpen, setMitigationActionsOpen] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [recordDetailsOpen, setRecordDetailsOpen] = useState(false);
@@ -9993,7 +10233,8 @@ function RiskDrawer({
     setCommentDraft('');
     setEditingCommentId(null);
     setCommentEditDraft('');
-    setActionDraft({title: '', owner: '', dueDate: ''});
+    setActionDraft(getDefaultActionDraft());
+    setPendingDeleteActionId(null);
     setConfirmDelete(false);
     setEditingRiskId(false);
     setEditingRiskTitle(false);
@@ -10001,8 +10242,7 @@ function RiskDrawer({
     setRiskTitleDraft(risk.title);
     setRiskIdError('');
     setHistoryExpanded(false);
-    setProjectedResidualOpen(false);
-    setMitigationActionsOpen(false);
+        setMitigationActionsOpen(false);
     setCommentsOpen(false);
     setRecordDetailsOpen(false);
     setHistoryOpen(false);
@@ -10029,6 +10269,38 @@ function RiskDrawer({
 
   if (!open) {
     return null;
+  }
+
+  function getDefaultActionDraft(actions = risk.mitigationActions): MitigationActionDraft {
+    const finalProjection = getFinalMitigationActionProjection(actions);
+    return {
+      title: '',
+      owner: '',
+      dueDate: '',
+      projectedLikelihood: String(finalProjection?.likelihood ?? risk.residualLikelihood),
+      projectedImpact: String(finalProjection?.impact ?? risk.residualImpact),
+    };
+  }
+
+  function getProjectedResidualUpdates(actions: MitigationAction[]) {
+    const finalProjection = getFinalMitigationActionProjection(actions);
+    return finalProjection
+      ? {
+          residualLikelihood: finalProjection.likelihood,
+          residualImpact: finalProjection.impact,
+        }
+      : {};
+  }
+
+  function saveMitigationActions(actions: MitigationAction[], historyLabel: string) {
+    onUpdateRisk(
+      risk.id,
+      {
+        mitigationActions: actions,
+        ...getProjectedResidualUpdates(actions),
+      },
+      historyLabel,
+    );
   }
 
   function saveRiskId() {
@@ -10209,33 +10481,33 @@ function RiskDrawer({
         owner: actionDraft.owner.trim(),
         dueDate: actionDraft.dueDate,
         status: 'Not Started',
+        projectedLikelihood: normalizeScoreValue(actionDraft.projectedLikelihood, risk.residualLikelihood),
+        projectedImpact: normalizeScoreValue(actionDraft.projectedImpact, risk.residualImpact),
       },
     ];
 
-    onUpdateRisk(risk.id, {mitigationActions: nextActions}, 'Mitigation action added');
-    setActionDraft({title: '', owner: '', dueDate: ''});
+    saveMitigationActions(nextActions, 'Mitigation action added');
+    setActionDraft(getDefaultActionDraft(nextActions));
     setSavedFieldLabel('Mitigation action added');
   }
 
   function updateMitigationAction(actionId: string, updates: Partial<MitigationAction>) {
-    onUpdateRisk(
-      risk.id,
-      {
-        mitigationActions: risk.mitigationActions.map((action) =>
-          action.id === actionId ? {...action, ...updates} : action,
-        ),
-      },
-      'Mitigation action updated',
+    const nextActions = risk.mitigationActions.map((action) =>
+      action.id === actionId ? {...action, ...updates} : action,
     );
+
+    saveMitigationActions(nextActions, 'Mitigation action updated');
     setSavedFieldLabel('Mitigation action updated');
   }
 
+  function requestDeleteMitigationAction(actionId: string) {
+    setPendingDeleteActionId(actionId);
+  }
+
   function deleteMitigationAction(actionId: string) {
-    onUpdateRisk(
-      risk.id,
-      {mitigationActions: risk.mitigationActions.filter((action) => action.id !== actionId)},
-      'Mitigation action removed',
-    );
+    const nextActions = risk.mitigationActions.filter((action) => action.id !== actionId);
+    saveMitigationActions(nextActions, 'Mitigation action removed');
+    setPendingDeleteActionId(null);
     setSavedFieldLabel('Mitigation action removed');
   }
 
@@ -10298,7 +10570,13 @@ function RiskDrawer({
     setSavedFieldLabel('Comment deleted');
   }
 
+  const pendingDeleteAction = pendingDeleteActionId
+    ? risk.mitigationActions.find((action) => action.id === pendingDeleteActionId) ?? null
+    : null;
   const mitigationRequired = risk.severity !== 'Low';
+  const finalActionProjection = getFinalMitigationActionProjection(risk.mitigationActions);
+  const displayedResidualLikelihood = finalActionProjection?.likelihood ?? risk.residualLikelihood;
+  const displayedResidualImpact = finalActionProjection?.impact ?? risk.residualImpact;
   const sharedRiskUsages = risk.sharedRiskId
     ? sharedRiskSubscriptions
         .filter((subscription) => subscription.sharedRiskId === risk.sharedRiskId && subscription.projectId !== activeProjectId)
@@ -10848,6 +11126,45 @@ function RiskDrawer({
           </div>
         ) : null}
 
+        {pendingDeleteAction ? (
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/30 px-4 backdrop-blur-sm"
+            onClick={() => setPendingDeleteActionId(null)}
+            role="presentation"
+          >
+            <div
+              aria-modal="true"
+              className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,0.28)]"
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+            >
+              <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-rose-700">Confirm Delete</div>
+              <div className="mt-2 font-headline text-xl font-extrabold text-on-surface">Delete mitigation action?</div>
+              <div className="mt-3 rounded-xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-950">
+                {pendingDeleteAction.title}
+              </div>
+              <div className="mt-3 text-sm leading-relaxed text-on-surface-variant">
+                This removes the action and updates the projected residual risk from the remaining mitigation actions.
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
+                  onClick={() => setPendingDeleteActionId(null)}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-rose-700"
+                  onClick={() => deleteMitigationAction(pendingDeleteAction.id)}
+                  type="button"
+                >
+                  Delete Action
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         <DrawerSection title="Assessment">
           <div className="rounded-2xl bg-surface-container-low p-4">
             <div className="grid grid-cols-2 gap-4">
@@ -10914,59 +11231,54 @@ function RiskDrawer({
             value={draftNarrative.mitigation}
             viewValue={risk.mitigation}
           />
-          <CollapsibleDrawerSection
-            connected
-            open={projectedResidualOpen}
-            summary={`${risk.residualLikelihood} x ${risk.residualImpact} = ${getRiskScoreLabel(risk.residualLikelihood, risk.residualImpact)}`}
-            title="Projected Residual Risk"
-            onToggle={() => setProjectedResidualOpen((current) => !current)}
-          >
-            <div className="space-y-4">
-              <div className="mb-3 text-sm leading-relaxed text-on-surface-variant">
-                Set the risk score expected after the mitigation plan is complete. This does not change the current risk score.
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+            <CollapsibleDrawerSection
+              connected
+              open={mitigationActionsOpen}
+              summary={`${risk.mitigationActions.length} action${risk.mitigationActions.length === 1 ? '' : 's'}`}
+              title="Mitigation Actions"
+              onToggle={() => setMitigationActionsOpen((current) => !current)}
+            >
+              <MitigationActionsEditor
+                actions={risk.mitigationActions}
+                draft={actionDraft}
+                scoringModel={scoringModel}
+                currentLikelihood={risk.likelihood}
+                currentImpact={risk.impact}
+                onAdd={addMitigationAction}
+                onChangeDraft={setActionDraft}
+                onDelete={requestDeleteMitigationAction}
+                onUpdate={updateMitigationAction}
+              />
+            </CollapsibleDrawerSection>
+            <div className="ml-7 h-5 border-l-2 border-dashed border-primary/30" />
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-emerald-700">Projected Residual Risk</div>
+                  <div className="mt-1 text-sm font-semibold text-emerald-900">
+                    Expected score after mitigation actions
+                  </div>
+                </div>
+                <div className="rounded-full bg-white px-3 py-1 text-sm font-extrabold text-emerald-900 ring-1 ring-emerald-200">
+                  {getRiskScoreLabel(displayedResidualLikelihood, displayedResidualImpact)}
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <QuickEditSelect
-                  activeField={editingField}
-                  field="residualLikelihood"
-                  label="Residual likelihood"
-                  options={toScoreSelectOptions(scoringModel.likelihood)}
-                  value={String(risk.residualLikelihood)}
-                  onBeginEdit={setEditingField}
-                  onSave={saveQuickField}
-                />
-                <QuickEditSelect
-                  activeField={editingField}
-                  field="residualImpact"
-                  label="Residual impact"
-                  options={toScoreSelectOptions(scoringModel.impact)}
-                  value={String(risk.residualImpact)}
-                  onBeginEdit={setEditingField}
-                  onSave={saveQuickField}
-                />
-                <DrawerMeta
-                  label="Projected residual risk"
-                  value={`${risk.residualLikelihood} x ${risk.residualImpact} = ${getRiskScoreLabel(risk.residualLikelihood, risk.residualImpact)}`}
-                />
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div className="rounded-xl bg-white px-3 py-2 ring-1 ring-emerald-200/80">
+                  <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-700">Likelihood</div>
+                  <div className="mt-1 text-lg font-extrabold text-emerald-950">{displayedResidualLikelihood}</div>
+                </div>
+                <div className="rounded-xl bg-white px-3 py-2 ring-1 ring-emerald-200/80">
+                  <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-700">Impact</div>
+                  <div className="mt-1 text-lg font-extrabold text-emerald-950">{displayedResidualImpact}</div>
+                </div>
+              </div>
+              <div className="mt-2 text-xs font-semibold text-emerald-800">
+                Likelihood {displayedResidualLikelihood} x Impact {displayedResidualImpact} = {getRiskScoreLabel(displayedResidualLikelihood, displayedResidualImpact)}
               </div>
             </div>
-          </CollapsibleDrawerSection>
-          <CollapsibleDrawerSection
-            connected
-            open={mitigationActionsOpen}
-            summary={`${risk.mitigationActions.length} action${risk.mitigationActions.length === 1 ? '' : 's'}`}
-            title="Mitigation Actions"
-            onToggle={() => setMitigationActionsOpen((current) => !current)}
-          >
-            <MitigationActionsEditor
-              actions={risk.mitigationActions}
-              draft={actionDraft}
-              onAdd={addMitigationAction}
-              onChangeDraft={setActionDraft}
-              onDelete={deleteMitigationAction}
-              onUpdate={updateMitigationAction}
-            />
-          </CollapsibleDrawerSection>
+          </div>
         </DrawerSection>
 
         <DrawerSection title="Context">
@@ -11175,9 +11487,9 @@ function SummaryMetricCard({
   tone: string;
 }) {
   return (
-    <div className="rounded-2xl bg-slate-50 px-4 py-4">
+    <div className="rounded-2xl bg-slate-50 px-3 py-3">
       <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
-      <div className={`mt-2 font-headline text-3xl font-extrabold ${tone}`}>{value}</div>
+      <div className={`mt-1 font-headline text-2xl font-extrabold ${tone}`}>{value}</div>
     </div>
   );
 }
@@ -11190,14 +11502,14 @@ function SeverityBreakdownChart({
   const maxValue = Math.max(...bars.map((bar) => bar.value), 1);
 
   return (
-    <div className="rounded-2xl bg-slate-50 px-4 py-4">
-      <div className="flex h-44 items-end justify-between gap-3">
+    <div className="rounded-2xl bg-slate-50 px-3 py-3">
+      <div className="flex h-36 items-end justify-between gap-2">
         {bars.map((bar) => (
           <div key={bar.label} className="flex min-w-0 flex-1 flex-col items-center gap-3">
             <div className={`text-sm font-bold ${bar.textColor}`}>{bar.value}</div>
-            <div className="flex h-28 w-full items-end justify-center rounded-2xl bg-white px-3 py-3 ring-1 ring-slate-200/70">
+            <div className="flex h-20 w-full items-end justify-center rounded-xl bg-white px-2 py-2 ring-1 ring-slate-200/70">
               <div
-                className={`w-full rounded-xl ${bar.color} transition-all`}
+                className={`w-full rounded-lg ${bar.color} transition-all`}
                 style={{height: `${Math.max((bar.value / maxValue) * 100, bar.value > 0 ? 16 : 6)}%`}}
               />
             </div>
@@ -11290,6 +11602,8 @@ function RiskBurndownChart({
   const xForTime = (value: number) =>
     paddingLeft + ((Math.max(Math.min(value, timelineEnd), timelineStart) - timelineStart) / Math.max(timelineEnd - timelineStart, 1)) * plotWidth;
   const xTicks = Array.from({length: 5}, (_, index) => timelineStart + ((timelineEnd - timelineStart) * index) / 4);
+  const nowTime = new Date().getTime();
+  const showTodayMarker = nowTime >= timelineStart && nowTime <= timelineEnd;
   const panelX = plotRight + panelGap;
   const legendColumns = 1;
   const legendColumnWidth = plotRight - paddingLeft;
@@ -11393,7 +11707,39 @@ function RiskBurndownChart({
               </text>
             </g>
           ))}
-
+          {showTodayMarker ? (
+            <g>
+              <line
+                stroke="#0f766e"
+                strokeDasharray="5 5"
+                strokeOpacity="0.75"
+                strokeWidth="2"
+                x1={xForTime(nowTime)}
+                x2={xForTime(nowTime)}
+                y1={paddingTop}
+                y2={paddingTop + plotHeight}
+              />
+              <rect
+                fill="#ccfbf1"
+                height="18"
+                rx="9"
+                width="52"
+                x={Math.min(Math.max(xForTime(nowTime) - 26, paddingLeft), plotRight - 52)}
+                y={paddingTop - 28}
+              />
+              <text
+                fill="#0f766e"
+                fontSize="10"
+                fontWeight="900"
+                letterSpacing="1.2"
+                textAnchor="middle"
+                x={Math.min(Math.max(xForTime(nowTime), paddingLeft + 26), plotRight - 26)}
+                y={paddingTop - 15}
+              >
+                TODAY
+              </text>
+            </g>
+          ) : null}
           <text
             fill="#64748b"
             fontSize="11"
@@ -11593,50 +11939,52 @@ function RiskBurndownChart({
                 })}
                 {item.projection && item.points.length > 0 ? (
                   <g>
-                    <path
-                      d={`M ${xForTime(new Date(item.points[item.points.length - 1].at).getTime())} ${yForScore(item.points[item.points.length - 1].score)} L ${xForTime(new Date(item.projection.at).getTime())} ${yForScore(item.projection.score)}`}
-                      fill="none"
-                      opacity={isActive ? 0.85 : 0.18}
-                      stroke={color}
-                      strokeDasharray="10 10"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={isActive ? 4 : 2.5}
-                      style={{cursor: 'pointer'}}
-                      onClick={() => onSelectRisk(item.riskId)}
-                      onMouseEnter={(event) => {
-                        setHoveredRiskId(item.riskId);
-                        showHoverCard(event, item.riskId, `${item.title} - projected post-mitigation`);
-                      }}
-                      onMouseLeave={() => {
-                        setHoveredRiskId(null);
-                        setHoverCard(null);
-                      }}
-                      onMouseMove={(event) => showHoverCard(event, item.riskId, `${item.title} - projected post-mitigation`)}
-                    />
+                    {!item.projection.isOverdue ? (
+                      <path
+                        d={`M ${xForTime(new Date(item.points[item.points.length - 1].at).getTime())} ${yForScore(item.points[item.points.length - 1].score)} L ${xForTime(new Date(item.projection.at).getTime())} ${yForScore(item.projection.score)}`}
+                        fill="none"
+                        opacity={isActive ? 0.85 : 0.18}
+                        stroke={color}
+                        strokeDasharray="10 10"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={isActive ? 4 : 2.5}
+                        style={{cursor: 'pointer'}}
+                        onClick={() => onSelectRisk(item.riskId)}
+                        onMouseEnter={(event) => {
+                          setHoveredRiskId(item.riskId);
+                          showHoverCard(event, item.riskId, `${item.title} - projected post-mitigation`);
+                        }}
+                        onMouseLeave={() => {
+                          setHoveredRiskId(null);
+                          setHoverCard(null);
+                        }}
+                        onMouseMove={(event) => showHoverCard(event, item.riskId, `${item.title} - projected post-mitigation`)}
+                      />
+                    ) : null}
                     <circle
                       cx={xForTime(new Date(item.projection.at).getTime())}
                       cy={yForScore(item.projection.score)}
                       fill="#fff"
                       opacity={isActive ? 1 : 0.3}
                       r={isActive ? 6 : 4.5}
-                      stroke={color}
+                      stroke={item.projection.isOverdue ? '#d97706' : color}
                       strokeDasharray="4 4"
                       strokeWidth={3}
                       style={{cursor: 'pointer'}}
                       onClick={() => onSelectRisk(item.riskId)}
                       onMouseEnter={(event) => {
                         setHoveredRiskId(item.riskId);
-                        showHoverCard(event, item.riskId, `${item.title} - projected post-mitigation`);
+                        showHoverCard(event, item.riskId, `${item.title} - ${item.projection.isOverdue ? 'missed projection' : 'projected post-mitigation'}`);
                       }}
                       onMouseLeave={() => {
                         setHoveredRiskId(null);
                         setHoverCard(null);
                       }}
-                      onMouseMove={(event) => showHoverCard(event, item.riskId, `${item.title} - projected post-mitigation`)}
+                      onMouseMove={(event) => showHoverCard(event, item.riskId, `${item.title} - ${item.projection.isOverdue ? 'missed projection' : 'projected post-mitigation'}`)}
                     />
                     <text
-                      fill={color}
+                      fill={item.projection.isOverdue ? '#d97706' : color}
                       fontSize="10"
                       fontWeight="800"
                       opacity={isActive ? 0.95 : 0.24}
@@ -11644,7 +11992,7 @@ function RiskBurndownChart({
                       x={xForTime(new Date(item.projection.at).getTime())}
                       y={yForScore(item.projection.score) - 12}
                     >
-                      projected
+                      {item.projection.isOverdue ? 'missed' : 'projected'}
                     </text>
                   </g>
                 ) : null}
@@ -11667,7 +12015,7 @@ function RiskBurndownChart({
         </div>
       ) : null}
       <div className="mt-3 text-xs leading-relaxed text-on-surface-variant">
-        Filled points indicate score changes that include rationale. Open points indicate baseline or carry-forward points. Dashed lines show the guestimated post-mitigation score based on the projected residual score and the latest mitigation action due date. If that due date has passed, the dashed point is carried forward to today.
+        Filled points indicate score changes that include rationale. Open points indicate baseline or carry-forward points. Solid lines carry open risks forward to today at the saved current score. The teal vertical marker shows today. Dashed lines show future projected post-mitigation scores. Overdue projections appear as amber missed markers at their original due date when they fall inside the selected timeframe.
       </div>
     </div>
   );
@@ -12062,7 +12410,7 @@ function MitigationPlanField({
 }) {
   if (!isRequired) {
     return (
-      <div className="rounded-2xl bg-slate-50 px-4 py-4">
+      <div className="rounded-2xl bg-slate-50 px-3 py-3">
         <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</div>
         <p className="text-sm leading-relaxed text-on-surface-variant">
           Mitigation plans are not required for low risks. Contingency planning is not applicable at this risk level.
@@ -12118,70 +12466,147 @@ function MitigationPlanField({
   );
 }
 
+function MitigationScoreTransition({
+  fromLikelihood,
+  fromImpact,
+  toLikelihood,
+  toImpact,
+}: {
+  fromLikelihood: number;
+  fromImpact: number;
+  toLikelihood: number;
+  toImpact: number;
+}) {
+  return (
+    <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-stretch gap-2">
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-slate-500">Current</div>
+        <div className="mt-1 text-sm font-extrabold text-slate-700">{getRiskScoreLabel(fromLikelihood, fromImpact)}</div>
+        <div className="mt-1 text-[11px] font-semibold text-slate-500">
+          L {fromLikelihood} x I {fromImpact}
+        </div>
+      </div>
+      <div className="flex items-center justify-center text-sm font-extrabold text-primary" aria-hidden="true">
+        --&gt;
+      </div>
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+        <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-emerald-700">After Action</div>
+        <div className="mt-1 text-sm font-extrabold text-emerald-900">{getRiskScoreLabel(toLikelihood, toImpact)}</div>
+        <div className="mt-1 text-[11px] font-semibold text-emerald-700">
+          L {toLikelihood} x I {toImpact}
+        </div>
+      </div>
+    </div>
+  );
+}
 function MitigationActionsEditor({
   actions,
   draft,
+  scoringModel,
+  currentLikelihood,
+  currentImpact,
   onChangeDraft,
   onAdd,
   onUpdate,
   onDelete,
 }: {
   actions: MitigationAction[];
-  draft: {title: string; owner: string; dueDate: string};
-  onChangeDraft: (draft: {title: string; owner: string; dueDate: string}) => void;
+  draft: MitigationActionDraft;
+  scoringModel: RiskScoringModel;
+  currentLikelihood: number;
+  currentImpact: number;
+  onChangeDraft: (draft: MitigationActionDraft) => void;
   onAdd: () => void;
   onUpdate: (actionId: string, updates: Partial<MitigationAction>) => void;
   onDelete: (actionId: string) => void;
 }) {
+  const likelihoodOptions = toScoreSelectOptions(scoringModel.likelihood);
+  const impactOptions = toScoreSelectOptions(scoringModel.impact);
+
   return (
     <div className="space-y-3">
-        {actions.length === 0 ? (
-          <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface-variant">
-            No mitigation actions yet. Add specific actions when ownership, due dates, or completion tracking matters.
-          </div>
-        ) : (
-          actions.map((action) => (
-            <div key={action.id} className="rounded-xl bg-slate-50 px-4 py-3">
+      {actions.length === 0 ? (
+        <div className="rounded-xl bg-white px-4 py-3 text-sm leading-relaxed text-on-surface-variant ring-1 ring-slate-200/70">
+          No mitigation actions yet. Add specific actions when ownership, due dates, or completion tracking matters.
+        </div>
+      ) : (
+        actions.map((action) => (
+          <div key={action.id} className="rounded-xl bg-white px-4 py-3 ring-1 ring-slate-200/70">
+            <input
+              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-on-surface outline-none transition focus:border-primary/25 focus:bg-white"
+              onBlur={(event) => onUpdate(action.id, {title: event.target.value.trim() || action.title})}
+              defaultValue={action.title}
+            />
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <input
-                className="w-full rounded-lg border border-transparent bg-white px-3 py-2 text-sm font-semibold text-on-surface outline-none transition focus:border-primary/25"
-                onBlur={(event) => onUpdate(action.id, {title: event.target.value.trim() || action.title})}
-                defaultValue={action.title}
+                className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25 sm:col-span-2"
+                onBlur={(event) => onUpdate(action.id, {owner: event.target.value.trim()})}
+                defaultValue={action.owner}
+                placeholder="Owner"
               />
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <input
-                  className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25 sm:col-span-2"
-                  onBlur={(event) => onUpdate(action.id, {owner: event.target.value.trim()})}
-                  defaultValue={action.owner}
-                  placeholder="Owner"
-                />
-                <input
-                  className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
-                  onChange={(event) => onUpdate(action.id, {dueDate: event.target.value})}
-                  type="date"
-                  value={action.dueDate}
-                />
-                <select
-                  className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
-                  onChange={(event) => onUpdate(action.id, {status: event.target.value as MitigationAction['status']})}
-                  value={action.status}
-                >
-                  {(['Not Started', 'In Progress', 'Done', 'Blocked'] as MitigationAction['status'][]).map((status) => (
-                    <option key={status} value={status}>{status}</option>
-                  ))}
-                </select>
-              </div>
-              <button
-                className="mt-2 rounded-full bg-rose-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-rose-700 transition hover:bg-rose-100"
-                onClick={() => onDelete(action.id)}
-                type="button"
+              <input
+                className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                onChange={(event) => onUpdate(action.id, {dueDate: event.target.value})}
+                type="date"
+                value={action.dueDate}
+              />
+              <select
+                className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                onChange={(event) => onUpdate(action.id, {status: event.target.value as MitigationAction['status']})}
+                value={action.status}
               >
-                Delete Action
-              </button>
+                {(['Not Started', 'In Progress', 'Done', 'Blocked'] as MitigationAction['status'][]).map((status) => (
+                  <option key={status} value={status}>{status}</option>
+                ))}
+              </select>
             </div>
-          ))
-        )}
+            <div className="mt-3 rounded-xl border border-primary/10 bg-primary/5 px-3 py-3">
+              <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Projected Score After Action</div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Likelihood</span>
+                  <select
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                    onChange={(event) => onUpdate(action.id, {projectedLikelihood: Number(event.target.value)})}
+                    value={String(action.projectedLikelihood)}
+                  >
+                    {likelihoodOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Impact</span>
+                  <select
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                    onChange={(event) => onUpdate(action.id, {projectedImpact: Number(event.target.value)})}
+                    value={String(action.projectedImpact)}
+                  >
+                    {impactOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <MitigationScoreTransition
+                fromLikelihood={currentLikelihood}
+                fromImpact={currentImpact}
+                toLikelihood={action.projectedLikelihood}
+                toImpact={action.projectedImpact}
+              />
+            </div>
+            <button
+              className="mt-2 rounded-full bg-rose-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-rose-700 transition hover:bg-rose-100"
+              onClick={() => onDelete(action.id)}
+              type="button"
+            >
+              Delete Action
+            </button>
+          </div>
+        ))
+      )}
 
-      <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3">
+      <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white px-3 py-3">
         <input
           className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-on-surface outline-none focus:border-primary/25"
           onChange={(event) => onChangeDraft({...draft, title: event.target.value})}
@@ -12200,6 +12625,41 @@ function MitigationActionsEditor({
             onChange={(event) => onChangeDraft({...draft, dueDate: event.target.value})}
             type="date"
             value={draft.dueDate}
+          />
+        </div>
+        <div className="mt-3 rounded-xl border border-primary/10 bg-primary/5 px-3 py-3">
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Projected Score After Action</div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Likelihood</span>
+              <select
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                onChange={(event) => onChangeDraft({...draft, projectedLikelihood: event.target.value})}
+                value={draft.projectedLikelihood}
+              >
+                {likelihoodOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Impact</span>
+              <select
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-on-surface outline-none focus:border-primary/25"
+                onChange={(event) => onChangeDraft({...draft, projectedImpact: event.target.value})}
+                value={draft.projectedImpact}
+              >
+                {impactOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <MitigationScoreTransition
+            fromLikelihood={currentLikelihood}
+            fromImpact={currentImpact}
+            toLikelihood={Number(draft.projectedLikelihood)}
+            toImpact={Number(draft.projectedImpact)}
           />
         </div>
         <button
@@ -12540,3 +13000,4 @@ function DrawerAction({
     </button>
   );
 }
+
