@@ -31,6 +31,7 @@ type Risk = {
   statement: string;
   trigger: string;
   consequence: string;
+  because: string;
   resultingIn: string;
   status: RiskStatus;
   severity: RiskSeverity;
@@ -111,6 +112,7 @@ type SharedRisk = {
   statement: string;
   trigger: string;
   consequence: string;
+  because: string;
   status: RiskStatus;
   owner: string;
   upstreamLikelihood: number;
@@ -318,6 +320,260 @@ function escapeHtml(value: string) {
     .replace(/'/g, '&#39;');
 }
 
+
+function getRiskReportStatusClass(value: string) {
+  const normalized = value.toLowerCase();
+  if (normalized.includes('high') || normalized.includes('converted') || normalized.includes('rejected')) return 'danger';
+  if (normalized.includes('medium') || normalized.includes('monitoring') || normalized.includes('pending')) return 'warn';
+  if (normalized.includes('low') || normalized.includes('closed') || normalized.includes('active')) return 'good';
+  return 'neutral';
+}
+
+function renderRiskReportBurndownSvg(risk: Risk) {
+  const points = carryForwardCurrentRiskToToday(risk, buildRiskBurndownTimeline(risk));
+  const projection = buildRiskBurndownProjection(risk, points);
+  const plottedPoints = [...points, ...(projection ? [projection] : [])];
+
+  if (plottedPoints.length === 0) {
+    return '<div class="empty-chart">No score trajectory has been recorded for this risk yet.</div>';
+  }
+
+  const width = 920;
+  const height = 410;
+  const paddingLeft = 58;
+  const paddingRight = 32;
+  const paddingTop = 42;
+  const paddingBottom = 108;
+  const plotWidth = width - paddingLeft - paddingRight;
+  const plotHeight = height - paddingTop - paddingBottom;
+  const times = plottedPoints.map((point) => new Date(point.at).getTime()).filter((time) => Number.isFinite(time));
+  const rawStart = Math.min(...times);
+  const rawEnd = Math.max(...times, rawStart + 1);
+  const span = Math.max(rawEnd - rawStart, 1);
+  const padding = span <= 1000 * 60 * 60 * 24 ? Math.max(span * 0.3, 1000 * 60 * 30) : span * 0.08;
+  const start = rawStart - padding;
+  const end = rawEnd + padding;
+  const xForTime = (value: string) => {
+    const time = new Date(value).getTime();
+    const safeTime = Number.isFinite(time) ? Math.max(Math.min(time, end), start) : start;
+    return paddingLeft + ((safeTime - start) / Math.max(end - start, 1)) * plotWidth;
+  };
+  const yForScore = (score: number) => paddingTop + plotHeight - (Math.max(Math.min(score, 25), 0) / 25) * plotHeight;
+  const scoreBands = [
+    {from: 0, to: 8, fill: '#dcfce7'},
+    {from: 8, to: 15, fill: '#fef9c3'},
+    {from: 15, to: 25, fill: '#fee2e2'},
+  ];
+  const xTicks = Array.from({length: 4}, (_, index) => start + ((end - start) * index) / 3);
+  const dateLabelY = paddingTop + plotHeight + 36;
+  const timelineLabelY = paddingTop + plotHeight + 68;
+  const projectionNoteY = paddingTop + plotHeight + 92;
+  const path = points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${xForTime(point.at).toFixed(1)} ${yForScore(point.score).toFixed(1)}`)
+    .join(' ');
+  const projectionPath = projection && points.length
+    ? `M ${xForTime(points[points.length - 1].at).toFixed(1)} ${yForScore(points[points.length - 1].score).toFixed(1)} L ${xForTime(projection.at).toFixed(1)} ${yForScore(projection.score).toFixed(1)}`
+    : '';
+
+  return `
+    <svg class="burndown" viewBox="0 0 ${width} ${height}" role="img" aria-label="Risk burndown chart for ${escapeHtml(risk.id)}">
+      <rect fill="#f8fafc" height="${height}" rx="14" width="${width}" x="0" y="0" />
+      <text class="chart-title" x="${width / 2}" y="26">Risk Score Trajectory</text>
+      ${scoreBands.map((band) => `
+        <rect fill="${band.fill}" height="${(yForScore(band.from) - yForScore(band.to)).toFixed(1)}" rx="8" width="${plotWidth}" x="${paddingLeft}" y="${yForScore(band.to).toFixed(1)}" />
+      `).join('')}
+      ${[0, 5, 10, 15, 20, 25].map((tick) => `
+        <line stroke="#cbd5e1" stroke-dasharray="4 6" x1="${paddingLeft}" x2="${paddingLeft + plotWidth}" y1="${yForScore(tick).toFixed(1)}" y2="${yForScore(tick).toFixed(1)}" />
+        <text class="axis" text-anchor="end" x="${paddingLeft - 10}" y="${(yForScore(tick) + 4).toFixed(1)}">${tick}</text>
+      `).join('')}
+      ${xTicks.map((tick) => `
+        <text class="axis" text-anchor="middle" x="${(paddingLeft + ((tick - start) / Math.max(end - start, 1)) * plotWidth).toFixed(1)}" y="${dateLabelY}">${escapeHtml(formatBurndownDateLabel(new Date(tick).toISOString(), rawStart, rawEnd))}</text>
+      `).join('')}
+      <text class="axis-title" text-anchor="middle" transform="translate(18 ${paddingTop + plotHeight / 2}) rotate(-90)">Risk Score</text>
+      <text class="axis-title" text-anchor="middle" x="${paddingLeft + plotWidth / 2}" y="${timelineLabelY}">Timeline</text>
+      <path d="${path}" fill="none" stroke="#2563eb" stroke-linecap="round" stroke-linejoin="round" stroke-width="4" />
+      ${projectionPath ? `<path d="${projectionPath}" fill="none" stroke="#475569" stroke-dasharray="9 8" stroke-linecap="round" stroke-width="3" />` : ''}
+      ${points.map((point) => `
+        <circle cx="${xForTime(point.at).toFixed(1)}" cy="${yForScore(point.score).toFixed(1)}" fill="#2563eb" r="5" />
+        <text class="point-label" text-anchor="middle" x="${xForTime(point.at).toFixed(1)}" y="${(yForScore(point.score) - 11).toFixed(1)}">${point.score}</text>
+      `).join('')}
+      ${projection ? `
+        <circle cx="${xForTime(projection.at).toFixed(1)}" cy="${yForScore(projection.score).toFixed(1)}" fill="#fff" r="6" stroke="#475569" stroke-width="3" />
+        <text class="point-label" text-anchor="middle" x="${xForTime(projection.at).toFixed(1)}" y="${(yForScore(projection.score) - 12).toFixed(1)}">${projection.score}</text>
+        <text class="legend" x="${paddingLeft}" y="${projectionNoteY}">Dashed segment shows projected post-mitigation score by ${escapeHtml(formatDisplayDate(projection.displayDate))}</text>
+      ` : ''}
+    </svg>`;
+}
+
+function buildRiskReportHtml({
+  risk,
+  project,
+  scoringModel,
+  linkedDecision,
+  sharedRisk,
+}: {
+  risk: Risk;
+  project: Project;
+  scoringModel: RiskScoringModel;
+  linkedDecision: Decision | null;
+  sharedRisk: SharedRisk | null;
+}) {
+  const exportedAt = new Date().toISOString();
+  const points = carryForwardCurrentRiskToToday(risk, buildRiskBurndownTimeline(risk));
+  const projection = buildRiskBurndownProjection(risk, points);
+  const currentScore = risk.likelihood * risk.impact;
+  const projectedScore = risk.residualLikelihood * risk.residualImpact;
+  const likelihoodLabel = getScoreDefinition(scoringModel.likelihood, risk.likelihood)?.label ?? String(risk.likelihood);
+  const impactLabel = getScoreDefinition(scoringModel.impact, risk.impact)?.label ?? String(risk.impact);
+  const actionCounts = risk.mitigationActions.reduce<Record<MitigationAction['status'], number>>(
+    (counts, action) => ({...counts, [action.status]: counts[action.status] + 1}),
+    {'Not Started': 0, 'In Progress': 0, Done: 0, Blocked: 0},
+  );
+  const latestHistory = [...risk.history].sort((left, right) => new Date(right.at ?? '').getTime() - new Date(left.at ?? '').getTime());
+  const commentCount = risk.comments.length + (risk.legacyCommentCount ?? 0);
+  const row = (label: string, value: string) => `
+    <div class="kv">
+      <div class="kv-label">${escapeHtml(label)}</div>
+      <div class="kv-value">${escapeHtml(value || 'Not defined')}</div>
+    </div>`;
+  const paragraph = (value: string, fallback = 'Not defined') => `<p>${escapeHtml(value || fallback).replace(/\n/g, '<br>')}</p>`;
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(risk.id)} Risk Report</title>
+    <style>
+      :root { color-scheme: light; --ink: #1f2937; --muted: #64748b; --line: #dbe3ec; --soft: #f8fafc; --primary: #2563eb; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #eef2f7; color: var(--ink); font-family: Inter, Segoe UI, Arial, sans-serif; line-height: 1.5; }
+      main { max-width: 1120px; margin: 0 auto; padding: 34px 24px 48px; }
+      header { background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 28px; box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08); }
+      h1, h2, h3 { margin: 0; line-height: 1.15; }
+      h1 { font-size: 30px; }
+      h2 { font-size: 18px; margin-bottom: 14px; }
+      h3 { font-size: 15px; margin-bottom: 8px; }
+      section { margin-top: 18px; background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th { color: var(--muted); font-size: 11px; letter-spacing: 0.08em; text-align: left; text-transform: uppercase; }
+      th, td { border-bottom: 1px solid #e8edf3; padding: 10px 8px; vertical-align: top; }
+      tr:last-child td { border-bottom: 0; }
+      .eyebrow { color: var(--primary); font-size: 11px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; }
+      .subtitle { color: var(--muted); margin-top: 8px; }
+      .grid { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 20px; }
+      .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metric, .kv { background: var(--soft); border-radius: 12px; padding: 14px; }
+      .metric-label, .kv-label { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+      .metric-value { font-size: 24px; font-weight: 800; margin-top: 4px; }
+      .kv-value { font-size: 13px; font-weight: 650; margin-top: 4px; white-space: pre-wrap; }
+      .pill { display: inline-block; border-radius: 999px; font-size: 11px; font-weight: 800; margin: 4px 6px 0 0; padding: 5px 10px; text-transform: uppercase; }
+      .good { background: #dcfce7; color: #166534; }
+      .warn { background: #fef3c7; color: #92400e; }
+      .danger { background: #fee2e2; color: #991b1b; }
+      .neutral { background: #e2e8f0; color: #334155; }
+      .statement { background: #f8fafc; border-left: 4px solid var(--primary); border-radius: 12px; padding: 16px; }
+      .burndown { display: block; height: auto; max-width: 100%; }
+      .chart-title { fill: #1f2937; font-size: 18px; font-weight: 800; text-anchor: middle; }
+      .axis, .legend { fill: #64748b; font-size: 11px; font-weight: 700; }
+      .axis-title { fill: #64748b; font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+      .point-label { fill: #1f2937; font-size: 11px; font-weight: 800; }
+      .empty-chart { background: var(--soft); border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); padding: 28px; }
+      .muted { color: var(--muted); }
+      .print-note { color: var(--muted); font-size: 12px; margin-top: 14px; }
+      @media (max-width: 820px) { main { padding: 18px 12px 32px; } .grid, .two { grid-template-columns: 1fr; } }
+      @media print { body { background: #fff; } main { max-width: none; padding: 0; } section, header { break-inside: avoid; box-shadow: none; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">Risk History Report - ${escapeHtml(project.name)}</div>
+        <h1>${escapeHtml(risk.id)} - ${escapeHtml(risk.title)}</h1>
+        <div class="subtitle">Generated ${escapeHtml(formatHistoryTimestamp(exportedAt))}. Last risk update ${escapeHtml(formatHistoryTimestamp(risk.lastUpdated))}.</div>
+        <div>
+          <span class="pill ${getRiskReportStatusClass(risk.status)}">${escapeHtml(risk.status)}</span>
+          <span class="pill ${getRiskReportStatusClass(risk.severity)}">${escapeHtml(risk.severity)} severity</span>
+          <span class="pill neutral">${escapeHtml(risk.responseType)}</span>
+          ${risk.internalOnly ? '<span class="pill danger">Internal only</span>' : ''}
+          ${risk.sharedRiskId ? `<span class="pill neutral">Shared ${escapeHtml(risk.sharedRiskId)}</span>` : ''}
+        </div>
+        <div class="grid">
+          <div class="metric"><div class="metric-label">Current Score</div><div class="metric-value">${currentScore}</div><div class="muted">${risk.likelihood} ${escapeHtml(likelihoodLabel)} x ${risk.impact} ${escapeHtml(impactLabel)}</div></div>
+          <div class="metric"><div class="metric-label">Projected Score</div><div class="metric-value">${projectedScore}</div><div class="muted">${risk.residualLikelihood} x ${risk.residualImpact}</div></div>
+          <div class="metric"><div class="metric-label">Owner</div><div class="metric-value" style="font-size:18px">${escapeHtml(risk.owner || 'Not assigned')}</div></div>
+          <div class="metric"><div class="metric-label">Due Date</div><div class="metric-value" style="font-size:18px">${escapeHtml(formatDisplayDate(risk.dueDate))}</div></div>
+        </div>
+      </header>
+
+      <section>
+        <h2>Risk Statement</h2>
+        <div class="statement">${paragraph(risk.statement, 'No risk statement recorded.')}</div>
+        <div class="grid two">
+          ${row('If / Trigger', risk.trigger)}
+          ${row('Then / Consequence', risk.consequence)}
+          ${row('Because / Cause', risk.because)}
+          ${row('Linked Decision', linkedDecision ? `${linkedDecision.id} - ${linkedDecision.title}` : risk.linkedDecision || 'None')}
+        </div>
+      </section>
+
+      <section>
+        <h2>Trajectory And Burndown</h2>
+        ${renderRiskReportBurndownSvg(risk)}
+        <table>
+          <thead><tr><th>Date</th><th>Event</th><th>Likelihood</th><th>Impact</th><th>Score</th><th>Rationale</th></tr></thead>
+          <tbody>
+            ${points.map((point) => `<tr><td>${escapeHtml(formatHistoryTimestamp(point.at))}</td><td>${escapeHtml(point.label)}</td><td>${point.likelihood}</td><td>${point.impact}</td><td><strong>${point.score}</strong></td><td>${escapeHtml(point.rationale || '')}</td></tr>`).join('')}
+            ${projection ? `<tr><td>${escapeHtml(formatDisplayDate(projection.displayDate))}</td><td>${escapeHtml(projection.label)}</td><td>${projection.likelihood}</td><td>${projection.impact}</td><td><strong>${projection.score}</strong></td><td>${projection.isOverdue ? 'Projected date has passed' : 'Projected from mitigation actions'}</td></tr>` : ''}
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Response And Actions</h2>
+        <div class="grid">
+          <div class="metric"><div class="metric-label">Not Started</div><div class="metric-value">${actionCounts['Not Started']}</div></div>
+          <div class="metric"><div class="metric-label">In Progress</div><div class="metric-value">${actionCounts['In Progress']}</div></div>
+          <div class="metric"><div class="metric-label">Done</div><div class="metric-value">${actionCounts.Done}</div></div>
+          <div class="metric"><div class="metric-label">Blocked</div><div class="metric-value">${actionCounts.Blocked}</div></div>
+        </div>
+        <h3 style="margin-top:18px">Mitigation Plan</h3>
+        ${paragraph(risk.mitigation)}
+        <h3>Contingency Plan</h3>
+        ${paragraph(risk.contingency)}
+        <table>
+          <thead><tr><th>Action</th><th>Owner</th><th>Due</th><th>Status</th><th>Projected Score</th></tr></thead>
+          <tbody>
+            ${risk.mitigationActions.length ? risk.mitigationActions.map((action) => `<tr><td>${escapeHtml(action.title)}</td><td>${escapeHtml(action.owner || 'Not assigned')}</td><td>${escapeHtml(formatDisplayDate(action.dueDate))}</td><td>${escapeHtml(action.status)}</td><td>${action.projectedLikelihood} x ${action.projectedImpact} = <strong>${action.projectedLikelihood * action.projectedImpact}</strong></td></tr>`).join('') : '<tr><td colspan="5" class="muted">No mitigation actions recorded.</td></tr>'}
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Decision, Sharing, And Comments</h2>
+        <div class="grid two">
+          ${row('Linked Decision Outcome', linkedDecision ? linkedDecision.outcome || linkedDecision.context || 'No decision narrative recorded.' : 'None')}
+          ${row('Shared Risk', sharedRisk ? `${sharedRisk.id} v${sharedRisk.versionNumber} - ${sharedRisk.lastChangeSummary.join('; ') || 'Current'}` : 'Not shared')}
+          ${row('Comment Count', String(commentCount))}
+          ${row('Created By', risk.createdBy)}
+        </div>
+        ${risk.comments.length ? `<table><thead><tr><th>Date</th><th>Author</th><th>Comment</th></tr></thead><tbody>${risk.comments.map((comment) => `<tr><td>${escapeHtml(formatHistoryTimestamp(comment.createdAt))}</td><td>${escapeHtml(comment.author || 'Unknown')}</td><td>${escapeHtml(comment.body)}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">No written comments recorded.</p>'}
+      </section>
+
+      <section>
+        <h2>Change History</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Change</th><th>Context</th></tr></thead>
+          <tbody>
+            ${latestHistory.length ? latestHistory.map((entry) => `<tr><td>${escapeHtml(formatHistoryTimestamp(entry.at ?? ''))}</td><td>${escapeHtml(entry.label)}</td><td>${escapeHtml(entry.meta)}</td></tr>`).join('') : '<tr><td colspan="3" class="muted">No history entries recorded.</td></tr>'}
+          </tbody>
+        </table>
+        <div class="print-note">This report is self-contained. Use the browser print dialog to save it as PDF if needed.</div>
+      </section>
+    </main>
+  </body>
+</html>`;
+}
 function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
   const boardName = snapshot.registry?.name || 'Governance Register';
   const exportedAt = snapshot.exportedAt;
@@ -878,6 +1134,10 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
               <div class="detail-card wide">
                 <div class="label">Consequence</div>
                 <div class="value">\${escapeHtml(risk.consequence || 'Not defined')}</div>
+              </div>
+              <div class="detail-card wide">
+                <div class="label">Cause / Rationale</div>
+                <div class="value">\${escapeHtml(risk.because || 'Not defined')}</div>
               </div>
               <div class="detail-card wide">
                 <div class="label">Mitigation Plan</div>
@@ -1900,18 +2160,35 @@ function normalizeMitigationActions(
     .filter((entry): entry is MitigationAction => Boolean(entry));
 }
 
+function normalizeStatementWhitespace(value: string) {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+function normalizeRiskClause(value: string) {
+  return normalizeStatementWhitespace(value).replace(/[.,;:!?]+$/g, '').trim();
+}
+
+function ensureSingleTerminalPunctuation(value: string) {
+  const normalized = normalizeStatementWhitespace(value).replace(/([.!?]){2,}$/g, '$1');
+  if (!normalized) {
+    return 'IF condition is triggered, THEN the defined consequence occurs.';
+  }
+
+  return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
+}
+
 function normalizeRiskStatement(value: string) {
-  const trimmed = value.trim().replace(/\s+/g, ' ');
+  const trimmed = normalizeStatementWhitespace(value);
   if (!trimmed) {
     return 'IF condition is triggered, THEN the defined consequence occurs.';
   }
 
   const upper = trimmed.toUpperCase();
   if (upper.startsWith('IF ') && upper.includes(', THEN ')) {
-    return trimmed;
+    return ensureSingleTerminalPunctuation(trimmed);
   }
 
-  return `IF ${trimmed.replace(/^IF\s+/i, '')}, THEN consequence to be defined.`;
+  return buildRiskStatement(trimmed.replace(/^IF\s+/i, ''), 'consequence to be defined');
 }
 
 function parseOptionalNumber(value: unknown) {
@@ -2019,18 +2296,20 @@ function mapSharedImpactProfileToLocalScore(definitions: ScoreDefinition[], prof
   return candidate?.value ?? null;
 }
 
-function buildRiskStatement(trigger: string, consequence: string, _resultingIn?: string) {
-  const cleanTrigger = trigger.trim().replace(/\s+/g, ' ');
-  const cleanConsequence = consequence.trim().replace(/\s+/g, ' ');
+function buildRiskStatement(trigger: string, consequence: string, because = '') {
+  const cleanTrigger = normalizeRiskClause(trigger);
+  const cleanConsequence = normalizeRiskClause(consequence);
+  const cleanBecause = normalizeRiskClause(because);
+  const becauseClause = cleanBecause ? `, BECAUSE ${cleanBecause}` : '';
 
-  return `IF ${cleanTrigger || 'condition is triggered'}, THEN ${cleanConsequence || 'consequence occurs'}.`;
+  return `IF ${cleanTrigger || 'condition is triggered'}, THEN ${cleanConsequence || 'consequence occurs'}${becauseClause}.`;
 }
 
 function renderStatementWithBoldKeywords(statement: string) {
-  const parts = statement.split(/(IF|THEN)/g);
+  const parts = statement.split(/(IF|THEN|BECAUSE)/g);
 
   return parts.map((part, index) => {
-    const isKeyword = part === 'IF' || part === 'THEN';
+    const isKeyword = part === 'IF' || part === 'THEN' || part === 'BECAUSE';
     return isKeyword ? (
       <strong key={`${part}-${index}`} className="font-extrabold text-on-surface">
         {part}
@@ -2379,6 +2658,7 @@ function getSharedRiskChangeSummary(previous: SharedRisk, next: SharedRisk) {
   track('statement changed', previous.statement, next.statement);
   track('trigger changed', previous.trigger, next.trigger);
   track('consequence changed', previous.consequence, next.consequence);
+  track('because changed', previous.because, next.because);
   track('status changed', previous.status, next.status);
   track('owner changed', previous.owner, next.owner);
   if (previous.upstreamLikelihood !== next.upstreamLikelihood) {
@@ -2526,6 +2806,7 @@ function normalizeRiskRecord(
   const projectedResidual = getResidualRating(residualLikelihood, residualImpact);
   const trigger = typeof input.trigger === 'string' ? input.trigger : '';
   const consequence = typeof input.consequence === 'string' ? input.consequence : '';
+  const because = typeof input.because === 'string' ? input.because : '';
   const inferredLastUpdated = inferRiskLastUpdated(input, context);
   const normalizedHistory = buildNormalizedHistoryEntries(input.history, inferredLastUpdated, context);
   const comments = normalizeRiskComments(input.comments);
@@ -2549,9 +2830,10 @@ function normalizeRiskRecord(
     statement:
       typeof input.statement === 'string' && input.statement.trim()
         ? normalizeRiskStatement(input.statement)
-        : buildRiskStatement(trigger, consequence),
+        : buildRiskStatement(trigger, consequence, because),
     trigger,
     consequence,
+    because,
     resultingIn: typeof input.resultingIn === 'string' ? input.resultingIn : '',
     status:
       input.status === 'Pending' ||
@@ -2636,6 +2918,7 @@ function normalizeScoringModel(model: RiskScoringModel | undefined) {
 function normalizeSharedRiskRecord(input: Partial<SharedRisk> & Record<string, unknown>): SharedRisk {
   const trigger = typeof input.trigger === 'string' ? input.trigger : '';
   const consequence = typeof input.consequence === 'string' ? input.consequence : '';
+  const because = typeof input.because === 'string' ? input.because : '';
   return {
     id: typeof input.id === 'string' ? input.id : formatSharedRiskSequence(1),
     referenceCode: typeof input.referenceCode === 'string' && input.referenceCode ? input.referenceCode : typeof input.id === 'string' ? input.id : formatSharedRiskSequence(1),
@@ -2643,9 +2926,10 @@ function normalizeSharedRiskRecord(input: Partial<SharedRisk> & Record<string, u
     statement:
       typeof input.statement === 'string' && input.statement.trim()
         ? normalizeRiskStatement(input.statement)
-        : buildRiskStatement(trigger, consequence),
+        : buildRiskStatement(trigger, consequence, because),
     trigger,
     consequence,
+    because,
     status:
       input.status === 'Pending' ||
       input.status === 'Active' ||
@@ -3660,6 +3944,7 @@ export default function App() {
         statement: sourceRisk.statement,
         trigger: sourceRisk.trigger,
         consequence: sourceRisk.consequence,
+        because: sourceRisk.because,
         status: sourceRisk.status,
         owner: sourceRisk.owner,
         upstreamLikelihood: sourceRisk.likelihood,
@@ -3689,6 +3974,7 @@ export default function App() {
       statement: sourceRisk.statement,
       trigger: sourceRisk.trigger,
       consequence: sourceRisk.consequence,
+      because: sourceRisk.because,
       status: sourceRisk.status,
       owner: sourceRisk.owner,
       upstreamLikelihood: sourceRisk.likelihood,
@@ -3741,8 +4027,8 @@ export default function App() {
 
         const nextRisk = {...risk, ...updates};
 
-        if (updates.trigger !== undefined || updates.consequence !== undefined) {
-          nextRisk.statement = buildRiskStatement(nextRisk.trigger, nextRisk.consequence, nextRisk.resultingIn);
+        if (updates.trigger !== undefined || updates.consequence !== undefined || updates.because !== undefined) {
+          nextRisk.statement = buildRiskStatement(nextRisk.trigger, nextRisk.consequence, nextRisk.because);
         }
 
         if (updates.statement !== undefined) {
@@ -3778,8 +4064,8 @@ export default function App() {
       ...currentRisk,
       ...updates,
     };
-    if (updates.trigger !== undefined || updates.consequence !== undefined) {
-      nextRisk.statement = buildRiskStatement(nextRisk.trigger, nextRisk.consequence, nextRisk.resultingIn);
+    if (updates.trigger !== undefined || updates.consequence !== undefined || updates.because !== undefined) {
+      nextRisk.statement = buildRiskStatement(nextRisk.trigger, nextRisk.consequence, nextRisk.because);
     }
     if (updates.statement !== undefined) {
       nextRisk.statement = normalizeRiskStatement(updates.statement);
@@ -3902,6 +4188,28 @@ export default function App() {
     }));
   }
 
+
+  function handleCreateRiskReport(riskId: string) {
+    const localRisk = riskRecords.find((risk) => risk.id === riskId);
+    if (!localRisk) {
+      return;
+    }
+
+    const linkedDecision = decisions.find((decision) => decision.id === localRisk.linkedDecision) ?? null;
+    const sharedRisk = localRisk.sharedRiskId
+      ? sharedRisks.find((item) => item.id === localRisk.sharedRiskId) ?? null
+      : null;
+    const html = buildRiskReportHtml({
+      risk: localRisk,
+      project: activeProject,
+      scoringModel: riskScoringModel,
+      linkedDecision,
+      sharedRisk,
+    });
+    const fileName = `${sanitizeFileStem(activeProject.name)}-${sanitizeFileStem(localRisk.id)}-risk-report-${getLocalFileDateStamp()}.html`;
+    downloadTextFile(html, fileName, 'text/html;charset=utf-8');
+  }
+
   function handleSubscribeToSharedRisk(sharedRiskId: string) {
     const sharedRisk = sharedRisks.find((risk) => risk.id === sharedRiskId);
     if (!sharedRisk) {
@@ -3970,6 +4278,7 @@ export default function App() {
       statement: sharedRisk.statement,
       trigger: sharedRisk.trigger,
       consequence: sharedRisk.consequence,
+      because: sharedRisk.because,
       resultingIn: '',
       status: 'Pending',
       severity: residual.severity,
@@ -4248,6 +4557,7 @@ export default function App() {
     impact: number;
     trigger: string;
     consequence: string;
+    because: string;
     responseType: Risk['responseType'];
     status: RiskStatus;
   }) {
@@ -4256,9 +4566,10 @@ export default function App() {
       id: input.id.trim(),
       originKey: createOriginKey('risk'),
       title: input.title.trim(),
-      statement: buildRiskStatement(input.trigger, input.consequence),
+      statement: buildRiskStatement(input.trigger, input.consequence, input.because),
       trigger: input.trigger.trim(),
       consequence: input.consequence.trim(),
+      because: input.because.trim(),
       resultingIn: '',
       status: input.status,
       severity: residual.severity,
@@ -4574,16 +4885,6 @@ export default function App() {
   }
 
   function handleStartNewBoard() {
-    const confirmationMessage = boardLoaded
-      ? hasUnsavedChanges
-        ? 'Starting a new board will leave the current board and any unpublished changes. Continue?'
-        : 'Start a new board and leave the current board?'
-      : 'Start a new blank board?';
-
-    if (!window.confirm(confirmationMessage)) {
-      return;
-    }
-
     currentBoardFileHandleRef.current = null;
     const blankProject = createBlankProject({
       id: 'proj-new-board',
@@ -4704,7 +5005,7 @@ export default function App() {
     const scopeSuffix =
       contentMode === 'both' ? 'read-only' : contentMode === 'risks' ? 'read-only-risks' : 'read-only-decisions';
     const fileName = `${sanitizeFileStem(registrySession.registryName)}_${timestampToken}_${scopeSuffix}.html`;
-    downloadTextFile(html, fileName, 'text/html');
+    downloadTextFile(html, fileName, 'text/html;charset=utf-8');
     setReadOnlyExportOpen(false);
     return `Exported a read-only board view as ${fileName} using your local time.`;
   }
@@ -5027,6 +5328,7 @@ export default function App() {
               sharedRiskSubscriptions={sharedRiskSubscriptions}
               activeProjectId={activeProject.id}
               onShareRisk={handleShareRisk}
+              onCreateRiskReport={handleCreateRiskReport}
               onUnshareRisk={handleUnshareRisk}
               onOpenSharedRisk={handleSharedRiskSelect}
             />
@@ -5783,6 +6085,7 @@ function CreateRiskModal({
     impact: number;
     trigger: string;
     consequence: string;
+    because: string;
     responseType: Risk['responseType'];
     status: RiskStatus;
   }) => void;
@@ -5800,6 +6103,7 @@ function CreateRiskModal({
     impact: '3',
     trigger: '',
     consequence: '',
+    because: '',
     responseType: 'Mitigate' as Risk['responseType'],
     status: 'Pending' as RiskStatus,
   });
@@ -5814,6 +6118,7 @@ function CreateRiskModal({
       impact: '3',
       trigger: '',
       consequence: '',
+      because: '',
       responseType: 'Mitigate',
       status: 'Pending',
     });
@@ -5826,11 +6131,12 @@ function CreateRiskModal({
       !form.title &&
       !form.trigger &&
       !form.consequence &&
+      !form.because &&
       form.id !== nextRiskId
     ) {
       setForm((current) => ({...current, id: nextRiskId}));
     }
-  }, [form.consequence, form.id, form.title, form.trigger, nextRiskId, open]);
+  }, [form.because, form.consequence, form.id, form.title, form.trigger, nextRiskId, open]);
 
   useEffect(() => {
     if (!ownerMenuOpen) {
@@ -5851,7 +6157,7 @@ function CreateRiskModal({
     return null;
   }
 
-  const generatedStatement = buildRiskStatement(form.trigger, form.consequence);
+  const generatedStatement = buildRiskStatement(form.trigger, form.consequence, form.because);
   const scorePreview = Number(form.likelihood) * Number(form.impact);
   const severityPreview = getSeverityFromAssessment(Number(form.likelihood), Number(form.impact));
   const missingFields = [
@@ -6065,7 +6371,11 @@ function CreateRiskModal({
                   {' '}
                   <span className="font-semibold text-on-surface">THEN</span>
                   {' '}
-                  consequence.
+                  consequence, optionally followed by
+                  {' '}
+                  <span className="font-semibold text-on-surface">BECAUSE</span>
+                  {' '}
+                  cause.
                 </div>
 
                 <div className="space-y-4">
@@ -6094,6 +6404,21 @@ function CreateRiskModal({
                       onChange={(event) => setForm((current) => ({...current, consequence: event.target.value}))}
                       placeholder="Describe the immediate consequence"
                       value={form.consequence}
+                    />
+                  </div>
+
+                  <div>
+                    <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+                      <span className="text-on-surface">BECAUSE</span>
+                      {' '}
+                      Cause / Rationale
+                      <span className="ml-2 font-semibold normal-case tracking-normal text-slate-400">Optional</span>
+                    </div>
+                    <textarea
+                      className="min-h-20 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
+                      onChange={(event) => setForm((current) => ({...current, because: event.target.value}))}
+                      placeholder="Describe why this risk could occur"
+                      value={form.because}
                     />
                   </div>
                 </div>
@@ -6147,6 +6472,7 @@ function CreateRiskModal({
                     impact: Number(form.impact),
                     trigger: form.trigger,
                     consequence: form.consequence,
+                    because: form.because,
                     responseType: form.responseType,
                     status: form.status,
                   });
@@ -10072,6 +10398,7 @@ function SharedRiskDrawer({
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <DrawerMeta label="Trigger / Condition" value={sharedRisk.trigger} />
               <DrawerMeta label="Consequence" value={sharedRisk.consequence} />
+              <DrawerMeta label="Cause / Rationale" value={sharedRisk.because || 'Not defined'} />
             </div>
           </DrawerSection>
 
@@ -10166,6 +10493,7 @@ function RiskDrawer({
   sharedRiskSubscriptions,
   activeProjectId,
   onShareRisk,
+  onCreateRiskReport,
   onUnshareRisk,
   onOpenSharedRisk,
 }: {
@@ -10185,6 +10513,7 @@ function RiskDrawer({
   sharedRiskSubscriptions: SharedRiskSubscription[];
   activeProjectId: string;
   onShareRisk: (riskId: string) => void;
+  onCreateRiskReport: (riskId: string) => void;
   onUnshareRisk: (riskId: string) => void;
   onOpenSharedRisk: (sharedRiskId: string) => void;
 }) {
@@ -10218,6 +10547,7 @@ function RiskDrawer({
   const [draftNarrative, setDraftNarrative] = useState({
     trigger: risk.trigger,
     consequence: risk.consequence,
+    because: risk.because,
     mitigation: risk.mitigation,
     contingency: risk.contingency,
   });
@@ -10250,10 +10580,11 @@ function RiskDrawer({
     setDraftNarrative({
       trigger: risk.trigger,
       consequence: risk.consequence,
+      because: risk.because,
       mitigation: risk.mitigation,
       contingency: risk.contingency,
     });
-  }, [risk.id, risk.title, risk.trigger, risk.consequence, risk.mitigation, risk.contingency]);
+  }, [risk.id, risk.title, risk.trigger, risk.consequence, risk.because, risk.mitigation, risk.contingency]);
 
   useEffect(() => {
     if (!savedFieldLabel) {
@@ -10433,6 +10764,7 @@ function RiskDrawer({
     setDraftNarrative({
       trigger: risk.trigger,
       consequence: risk.consequence,
+      because: risk.because,
       mitigation: risk.mitigation,
       contingency: risk.contingency,
     });
@@ -10442,7 +10774,8 @@ function RiskDrawer({
     const statementUpdates = {
       trigger: draftNarrative.trigger,
       consequence: draftNarrative.consequence,
-      statement: buildRiskStatement(draftNarrative.trigger, draftNarrative.consequence),
+      because: draftNarrative.because,
+      statement: buildRiskStatement(draftNarrative.trigger, draftNarrative.consequence, draftNarrative.because),
     };
 
     onUpdateRisk(risk.id, statementUpdates, 'Risk statement updated');
@@ -10977,6 +11310,7 @@ function RiskDrawer({
           ) : (
             <DrawerAction icon="link_off" label="Unshare" destructive onClick={() => onUnshareRisk(risk.id)} />
           )}
+          <DrawerAction icon="summarize" label="Report" onClick={() => onCreateRiskReport(risk.id)} />
           <DrawerAction destructive icon="delete" label="Delete" onClick={() => setConfirmDelete(true)} />
         </div>
 
@@ -11190,18 +11524,22 @@ function RiskDrawer({
             </div>
           </div>
           <RiskStatementField
+            becauseLabel="Cause / Rationale"
+            becauseValue={draftNarrative.because}
             consequenceLabel="Consequence"
             consequenceValue={draftNarrative.consequence}
             editable={editingStatement}
             generatedValue={buildRiskStatement(
               draftNarrative.trigger,
               draftNarrative.consequence,
+              draftNarrative.because,
             )}
             label="Risk Statement"
             onCancel={() => {
               setEditingStatement(false);
               resetNarrativeDraft();
             }}
+            onBecauseChange={(value) => setDraftNarrative((current) => ({...current, because: value}))}
             onConsequenceChange={(value) => setDraftNarrative((current) => ({...current, consequence: value}))}
             onEdit={() => setEditingStatement(true)}
             onSave={saveStatementEdit}
@@ -12304,10 +12642,13 @@ function RiskStatementField({
   triggerValue,
   consequenceLabel,
   consequenceValue,
+  becauseLabel,
+  becauseValue,
   generatedValue,
   onEdit,
   onTriggerChange,
   onConsequenceChange,
+  onBecauseChange,
   onSave,
   onCancel,
 }: {
@@ -12318,10 +12659,13 @@ function RiskStatementField({
   triggerValue: string;
   consequenceLabel: string;
   consequenceValue: string;
+  becauseLabel: string;
+  becauseValue: string;
   generatedValue: string;
   onEdit: () => void;
   onTriggerChange: (value: string) => void;
   onConsequenceChange: (value: string) => void;
+  onBecauseChange: (value: string) => void;
   onSave: () => void;
   onCancel: () => void;
 }) {
@@ -12355,6 +12699,17 @@ function RiskStatementField({
               className="min-h-20 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
               onChange={(event) => onConsequenceChange(event.target.value)}
               value={consequenceValue}
+            />
+          </div>
+          <div>
+            <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+              {becauseLabel}
+              <span className="ml-2 font-semibold normal-case tracking-normal text-slate-400">Optional</span>
+            </div>
+            <textarea
+              className="min-h-20 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-on-surface outline-none transition focus:border-primary/25 focus:bg-white focus:shadow-[0_0_0_4px_rgba(79,94,126,0.08)]"
+              onChange={(event) => onBecauseChange(event.target.value)}
+              value={becauseValue}
             />
           </div>
           <div className="rounded-2xl bg-slate-50 px-4 py-3">
