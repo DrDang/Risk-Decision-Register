@@ -837,6 +837,48 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
         line-height: 1.6;
         white-space: pre-wrap;
       }
+      .detail-card .value.action-list {
+        display: grid;
+        gap: 10px;
+        white-space: normal;
+      }
+      .action-card {
+        padding: 12px 14px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+      }
+      .action-title {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+      }
+      .action-title strong {
+        line-height: 1.4;
+      }
+      .action-number {
+        display: inline-grid;
+        place-items: center;
+        flex: 0 0 24px;
+        width: 24px;
+        height: 24px;
+        border-radius: 999px;
+        background: var(--primary-soft);
+        color: var(--primary);
+        font-size: 11px;
+        font-weight: 800;
+      }
+      .action-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px 16px;
+        margin: 12px 0 0 33px;
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+      .action-meta strong {
+        color: var(--text);
+      }
       .empty {
         display: grid;
         place-items: center;
@@ -863,6 +905,9 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
           padding: 18px;
         }
         .detail-grid {
+          grid-template-columns: 1fr;
+        }
+        .action-meta {
           grid-template-columns: 1fr;
         }
       }
@@ -984,8 +1029,8 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
 
       function statusChipClass(value) {
         const normalized = String(value || '').toLowerCase();
-        if (['high', 'rejected', 'closed'].includes(normalized)) return 'chip high';
-        if (['medium', 'proposed', 'deferred', 'pending', 'monitoring'].includes(normalized)) return 'chip medium';
+        if (['high', 'rejected', 'closed', 'blocked'].includes(normalized)) return 'chip high';
+        if (['medium', 'proposed', 'deferred', 'pending', 'monitoring', 'not started', 'in progress'].includes(normalized)) return 'chip medium';
         return 'chip low';
       }
 
@@ -1142,6 +1187,27 @@ function buildReadOnlyBoardHtml(snapshot: AppSnapshot) {
               <div class="detail-card wide">
                 <div class="label">Mitigation Plan</div>
                 <div class="value">\${escapeHtml(risk.mitigation || 'Not defined')}</div>
+              </div>
+              <div class="detail-card wide">
+                <div class="label">Mitigation Steps</div>
+                <div class="value action-list">
+                  \${(risk.mitigationActions || []).length
+                    ? risk.mitigationActions.map((action, index) => \`
+                        <div class="action-card">
+                          <div class="action-title">
+                            <span class="action-number">\${index + 1}</span>
+                            <strong>\${escapeHtml(action.title || 'Untitled mitigation action')}</strong>
+                          </div>
+                          <div class="action-meta">
+                            <span>Owner: <strong>\${escapeHtml(action.owner || 'Not assigned')}</strong></span>
+                            <span>Due: <strong>\${escapeHtml(formatDateTime(action.dueDate))}</strong></span>
+                            <span>Status: <span class="\${statusChipClass(action.status)}">\${escapeHtml(action.status || 'Not Started')}</span></span>
+                            <span>Projected score: <strong>\${escapeHtml(String(action.projectedLikelihood))} &times; \${escapeHtml(String(action.projectedImpact))} = \${escapeHtml(String(action.projectedLikelihood * action.projectedImpact))}</strong></span>
+                          </div>
+                        </div>
+                      \`).join('')
+                    : '<span class="muted">No mitigation steps have been added.</span>'}
+                </div>
               </div>
               <div class="detail-card">
                 <div class="label">Response</div>
@@ -5151,8 +5217,8 @@ export default function App() {
         baseRevision: savedSnapshot.registry?.revision ?? nextRevision,
         baseContentHash: savedSnapshot.registry?.contentHash ?? null,
         loadedAt: savedAt,
-        lastPublishedAt: savedAt,
-        lastPublishedRevision: nextRevision,
+        lastPublishedAt: registrySession.lastPublishedAt,
+        lastPublishedRevision: registrySession.lastPublishedRevision,
         status: 'master_loaded_clean',
         lastError: '',
       });
@@ -5171,8 +5237,8 @@ export default function App() {
       baseRevision: savedSnapshot.registry?.revision ?? nextRevision,
       baseContentHash: savedSnapshot.registry?.contentHash ?? null,
       loadedAt: savedAt,
-      lastPublishedAt: savedAt,
-      lastPublishedRevision: nextRevision,
+      lastPublishedAt: registrySession.lastPublishedAt,
+      lastPublishedRevision: registrySession.lastPublishedRevision,
       status: 'master_loaded_clean',
       lastError: '',
     });
@@ -5254,6 +5320,7 @@ export default function App() {
                 decisions={decisions}
                 selectedDecision={selectedDecision}
                 risks={riskRecords}
+                onCreateDecision={() => setCreateDecisionOpen(true)}
                 onSelectDecision={setSelectedDecisionId}
                 onUpdateDecision={handleUpdateDecision}
                 onDeleteDecision={handleDeleteDecision}
@@ -5804,23 +5871,6 @@ function TopNav({
 }) {
   const showPrimaryAction = view === 'risk' || view === 'decision';
   const [helpOpen, setHelpOpen] = useState(false);
-  const [publishMenuOpen, setPublishMenuOpen] = useState(false);
-  const publishMenuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!publishMenuOpen) {
-      return undefined;
-    }
-
-    function handlePointerDown(event: MouseEvent) {
-      if (!publishMenuRef.current?.contains(event.target as Node)) {
-        setPublishMenuOpen(false);
-      }
-    }
-
-    window.addEventListener('mousedown', handlePointerDown);
-    return () => window.removeEventListener('mousedown', handlePointerDown);
-  }, [publishMenuOpen]);
 
   return (
     <>
@@ -5845,86 +5895,51 @@ function TopNav({
         </div>
         <div className="flex items-center gap-4">
           {boardLoaded ? (
-            <div className="hidden text-right md:block">
+            <div className="hidden text-right 2xl:block">
               <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
-                {hasUnsavedChanges ? 'Unpublished changes' : 'Board up to date'}
+                {hasUnsavedChanges ? 'Unsaved changes' : 'Current file saved'}
               </div>
               <div className="text-xs text-slate-500">
-                {hasUnsavedChanges ? 'Ctrl+S saves the current board file' : 'Ready for your next edits'}
+                {hasUnsavedChanges ? 'Save this file or publish a new version' : 'Ready to publish or export'}
               </div>
             </div>
           ) : null}
           {boardLoaded ? (
-            <div className="relative" ref={publishMenuRef}>
-              <div className="flex overflow-hidden rounded-xl">
-                <button
-                  className={`px-4 py-2.5 text-sm font-bold transition ${
-                    hasUnsavedChanges
-                      ? 'bg-primary text-on-primary hover:bg-primary-dim'
-                      : 'bg-white text-on-surface ring-1 ring-slate-200 hover:bg-slate-50'
-                  }`}
-                  onClick={onPublishBoard}
-                  type="button"
-                >
-                  Publish
-                </button>
-                <button
-                  aria-expanded={publishMenuOpen}
-                  aria-haspopup="menu"
-                  className={`border-l px-3 py-2.5 text-sm transition ${
-                    hasUnsavedChanges
-                      ? 'border-white/20 bg-primary text-on-primary hover:bg-primary-dim'
-                      : 'border-slate-200 bg-white text-on-surface ring-1 ring-slate-200 hover:bg-slate-50'
-                  }`}
-                  onClick={() => setPublishMenuOpen((current) => !current)}
-                  type="button"
-                >
-                  <span className="material-symbols-outlined text-[18px]">expand_more</span>
-                </button>
-              </div>
-              {publishMenuOpen ? (
-                <div
-                  className="absolute right-0 top-[calc(100%+0.5rem)] z-40 min-w-[220px] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_20px_60px_rgba(42,52,57,0.16)]"
-                  role="menu"
-                >
-                  <button
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-on-surface transition hover:bg-slate-50"
-                    onClick={() => {
-                      setPublishMenuOpen(false);
-                      onSaveBoard();
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <span className="material-symbols-outlined text-[18px] text-primary">save</span>
-                    <span>Save Current File</span>
-                  </button>
-                  <button
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-on-surface transition hover:bg-slate-50"
-                    onClick={() => {
-                      setPublishMenuOpen(false);
-                      onPublishBoard();
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <span className="material-symbols-outlined text-[18px] text-primary">upload_file</span>
-                    <span>Publish JSON</span>
-                  </button>
-                  <button
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-on-surface transition hover:bg-slate-50"
-                    onClick={() => {
-                      setPublishMenuOpen(false);
-                      onExportReadOnlyBoard();
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <span className="material-symbols-outlined text-[18px] text-primary">overview</span>
-                    <span>Export Read-Only HTML</span>
-                  </button>
-                </div>
-              ) : null}
+            <div className="flex items-center gap-2" aria-label="Board file actions">
+              <button
+                aria-label={hasUnsavedChanges ? 'Save current file; unsaved changes' : 'Save current file'}
+                className="relative flex items-center gap-2 rounded-xl bg-primary px-3 py-2.5 text-sm font-bold text-on-primary shadow-lg shadow-primary/20 transition hover:bg-primary-dim disabled:cursor-not-allowed disabled:bg-white disabled:text-on-surface disabled:opacity-50 disabled:shadow-none disabled:ring-1 disabled:ring-slate-200"
+                disabled={!hasUnsavedChanges}
+                onClick={onSaveBoard}
+                title="Save changes to the current JSON file (Ctrl+S)"
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[18px]">save</span>
+                <span className="hidden lg:inline">Save File{hasUnsavedChanges ? ' *' : ''}</span>
+                {hasUnsavedChanges ? (
+                  <span aria-hidden="true" className="absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-300 ring-2 ring-primary lg:hidden" />
+                ) : null}
+              </button>
+              <button
+                aria-label="Publish new JSON version"
+                className="flex items-center gap-2 rounded-xl bg-white px-3 py-2.5 text-sm font-bold text-on-surface ring-1 ring-slate-200 transition hover:bg-slate-50"
+                onClick={onPublishBoard}
+                title="Download a new timestamped JSON revision for sharing or archiving"
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[18px] text-primary">upload_file</span>
+                <span className="hidden lg:inline">Publish Version</span>
+              </button>
+              <button
+                aria-label="Export review HTML"
+                className="flex items-center gap-2 rounded-xl bg-white px-3 py-2.5 text-sm font-bold text-on-surface ring-1 ring-slate-200 transition hover:bg-slate-50"
+                onClick={onExportReadOnlyBoard}
+                title="Create a view-only HTML copy for reviewers"
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[18px] text-primary">overview</span>
+                <span className="hidden lg:inline">Export HTML</span>
+              </button>
             </div>
           ) : null}
           {showPrimaryAction ? (
@@ -5973,7 +5988,7 @@ function TopNav({
                 <div>
                   <div className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Start Here</div>
                   <p>
-                    Use `Registry Source` to open a board JSON, start a new board, publish a new board version, or export a read-only HTML view for teammates who only need to review the current registers.
+                    Use `Registry Source` to open or start a board. Save File updates your working JSON, Publish Version creates a new timestamped JSON artifact, and Review HTML creates a view-only copy for teammates.
                   </p>
                 </div>
 
@@ -6001,7 +6016,7 @@ function TopNav({
                 <div>
                   <div className="mb-1 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Master Workflow</div>
                   <p>
-                    Open or start a board, work in the browser, then publish a new JSON version when you are ready to save your changes. If you need a view-only shareout, export a read-only HTML copy.
+                    Use Save File or Ctrl+S for routine updates to the current JSON. Use Publish Version when you want a new timestamped board artifact to archive or distribute. Use Review HTML for a view-only shareout.
                   </p>
                 </div>
 
@@ -8061,7 +8076,7 @@ function SnapshotPage({
                 }}
                 type="button"
               >
-                Save
+                Save Current File
               </button>
               <button
                 className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-on-surface ring-1 ring-slate-200 transition hover:bg-slate-50"
@@ -8079,7 +8094,7 @@ function SnapshotPage({
                 }}
                 type="button"
               >
-                Publish
+                Publish New Version
               </button>
               <button
                 className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-on-surface ring-1 ring-slate-200 transition hover:bg-slate-50"
@@ -8096,7 +8111,7 @@ function SnapshotPage({
                 }}
                 type="button"
               >
-                Export Read-Only HTML
+                Export Review HTML
               </button>
               <button
                 className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-semibold text-on-surface transition hover:bg-slate-200"
@@ -9031,6 +9046,7 @@ function DecisionRegisterPage({
   decisions,
   selectedDecision,
   risks,
+  onCreateDecision,
   onSelectDecision,
   onUpdateDecision,
   onDeleteDecision,
@@ -9046,6 +9062,7 @@ function DecisionRegisterPage({
   decisions: Decision[];
   selectedDecision: Decision | null;
   risks: Risk[];
+  onCreateDecision: () => void;
   onSelectDecision: (decisionId: string) => void;
   onUpdateDecision: (decisionId: string, updates: Partial<Decision>) => void;
   onDeleteDecision: (decisionId: string) => void;
@@ -9230,8 +9247,17 @@ function DecisionRegisterPage({
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.45fr_1fr]">
         <div className="space-y-6">
           <section className="overflow-hidden rounded-[1.75rem] bg-white shadow-[0_14px_40px_rgba(42,52,57,0.06)]">
-            <div className="border-b border-slate-200/70 px-5 py-4">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4">
               <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Current Decisions</div>
+              <button
+                aria-label="Add decision"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-on-primary transition hover:bg-primary-dim"
+                onClick={onCreateDecision}
+                title="Add decision"
+                type="button"
+              >
+                <span className="material-symbols-outlined text-[19px]">add</span>
+              </button>
             </div>
             {renderDecisionTable(filteredCurrentDecisions, false, true)}
           </section>
