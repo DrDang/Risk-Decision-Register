@@ -5305,6 +5305,7 @@ export default function App() {
                 projects={projects}
                 selectedRiskId={selectedRisk?.id ?? ''}
                 selectedRisk={selectedRisk}
+                isRiskDrawerOpen={drawerOpen}
                 onSelectRisk={handleRiskSelect}
                 onSelectSharedRisk={handleSharedRiskSelect}
                 onCreateLinkedLocalRisk={handleCreateLinkedLocalRisk}
@@ -8185,6 +8186,7 @@ function RiskRegisterPage({
   projects,
   selectedRiskId,
   selectedRisk,
+  isRiskDrawerOpen,
   onSelectRisk,
   onSelectSharedRisk,
   onCreateLinkedLocalRisk,
@@ -8202,6 +8204,7 @@ function RiskRegisterPage({
   projects: Project[];
   selectedRiskId: string;
   selectedRisk: Risk | null;
+  isRiskDrawerOpen: boolean;
   onSelectRisk: (riskId: string) => void;
   onSelectSharedRisk: (sharedRiskId: string) => void;
   onCreateLinkedLocalRisk: (sharedRiskId: string) => void;
@@ -8314,6 +8317,10 @@ function RiskRegisterPage({
   });
   const heatmapValues = createHeatmapValues(heatmapRisks);
   const heatmapRiskMap = createHeatmapRiskMap(heatmapRisks);
+  const highlightedHeatmapCell =
+    isRiskDrawerOpen && selectedRisk
+      ? {likelihood: selectedRisk.likelihood, impact: selectedRisk.impact}
+      : null;
   const heatmapMatches = selectedHeatmapCell
     ? heatmapRisks.filter(
         (risk) =>
@@ -8594,6 +8601,7 @@ function RiskRegisterPage({
             </div>
             <div className="mx-auto w-full max-w-[520px] rounded-2xl bg-white">
               <Heatmap
+                highlightedCell={highlightedHeatmapCell}
                 selectedCell={selectedHeatmapCell}
                 riskMap={heatmapRiskMap}
                 values={heatmapValues}
@@ -11739,12 +11747,14 @@ function RiskDrawer({
 function Heatmap({
   values,
   riskMap,
+  highlightedCell,
   selectedCell,
   viewMode,
   onSelectCell,
 }: {
   values: number[][];
   riskMap: string[][][];
+  highlightedCell: HeatmapCell | null;
   selectedCell: HeatmapCell | null;
   viewMode: 'count' | 'ids';
   onSelectCell: (cell: HeatmapCell) => void;
@@ -11782,16 +11792,19 @@ function Heatmap({
                 const isHighestCorner = rowIndex === 0 && cellIndex === 4;
                 const isSelected =
                   selectedCell?.likelihood === likelihood && selectedCell?.impact === impact;
+                const isHighlighted =
+                  highlightedCell?.likelihood === likelihood && highlightedCell?.impact === impact;
                 return (
                   <button
                     key={`${label}-${cellIndex}`}
-                    className={`flex aspect-square flex-col items-center justify-center overflow-hidden rounded-lg p-1 text-center transition ${value > 0 ? colorGrid[rowIndex][cellIndex] : emptyCellGrid[rowIndex][cellIndex]} ${isHighestCorner ? 'ring-4 ring-red-600/20' : ''} ${isSelected ? 'ring-4 ring-primary/30' : ''} ${value > 0 ? 'cursor-pointer hover:scale-[1.02] shadow-sm' : 'cursor-default'}`}
+                    aria-current={isHighlighted ? 'location' : undefined}
+                    className={`relative flex aspect-square flex-col items-center justify-center overflow-hidden rounded-lg p-1 text-center transition ${value > 0 ? colorGrid[rowIndex][cellIndex] : emptyCellGrid[rowIndex][cellIndex]} ${isHighestCorner ? 'ring-4 ring-red-600/20' : ''} ${isSelected ? 'ring-4 ring-primary/30' : ''} ${isHighlighted ? 'z-10 scale-[1.04] ring-4 ring-sky-600 ring-offset-2 ring-offset-white shadow-xl' : ''} ${value > 0 ? 'cursor-pointer hover:scale-[1.02] shadow-sm' : 'cursor-default'}`}
                     onClick={() => {
                       if (value > 0) {
                         onSelectCell({likelihood, impact});
                       }
                     }}
-                    title={ids.length ? ids.join(', ') : 'No risks'}
+                    title={`${ids.length ? ids.join(', ') : 'No risks'}${isHighlighted ? ' (risk currently open for editing)' : ''}`}
                     type="button"
                   >
                     {viewMode === 'ids' && ids.length ? (
@@ -11975,6 +11988,8 @@ function RiskBurndownChart({
   const legendTitleY = paddingTop + plotHeight + 72;
   const legendStartY = paddingTop + plotHeight + 106;
   const activeRiskId = hoveredRiskId ?? highlightedRiskId;
+  const projectionLegendY =
+    legendStartY + Math.ceil(Math.min(chartSeries.length, 8) / legendColumns) * 34 + 4;
 
   function showHoverCard(event: ReactMouseEvent<SVGElement>, riskId: string, title: string) {
     const bounds = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
@@ -12187,19 +12202,25 @@ function RiskBurndownChart({
                     strokeLinecap="round"
                     strokeWidth="3"
                     x1={paddingLeft}
-                    x2={paddingLeft + 34}
-                    y1={legendStartY + Math.ceil(Math.min(chartSeries.length, 8) / legendColumns) * 34 + 4}
-                    y2={legendStartY + Math.ceil(Math.min(chartSeries.length, 8) / legendColumns) * 34 + 4}
+                    x2={paddingLeft + 28}
+                    y1={projectionLegendY}
+                    y2={projectionLegendY}
+                  />
+                  <polygon
+                    fill="#fff"
+                    points={`${paddingLeft + 36},${projectionLegendY - 6} ${paddingLeft + 42},${projectionLegendY} ${paddingLeft + 36},${projectionLegendY + 6} ${paddingLeft + 30},${projectionLegendY}`}
+                    stroke="#64748b"
+                    strokeWidth="2.5"
                   />
                   <text
                     fill="#64748b"
                     fontSize="10"
                     fontWeight="800"
                     letterSpacing="1.2"
-                    x={paddingLeft + 44}
-                    y={legendStartY + Math.ceil(Math.min(chartSeries.length, 8) / legendColumns) * 34 + 8}
+                    x={paddingLeft + 52}
+                    y={projectionLegendY + 4}
                   >
-                    DASHED = PROJECTED POST-MITIGATION SCORE
+                    DASHED LINE + DIAMOND = PROJECTED POST-MITIGATION SCORE
                   </text>
                 </g>
               ) : null}
@@ -12215,6 +12236,10 @@ function RiskBurndownChart({
                 return `${command} ${xForTime(new Date(point.at).getTime())} ${yForScore(point.score)}`;
               })
               .join(' ');
+            const projectionX = item.projection
+              ? xForTime(new Date(item.projection.at).getTime())
+              : 0;
+            const projectionY = item.projection ? yForScore(item.projection.score) : 0;
 
             return (
               <g key={item.riskId}>
@@ -12326,14 +12351,13 @@ function RiskBurndownChart({
                         onMouseMove={(event) => showHoverCard(event, item.riskId, `${item.title} - projected post-mitigation`)}
                       />
                     ) : null}
-                    <circle
-                      cx={xForTime(new Date(item.projection.at).getTime())}
-                      cy={yForScore(item.projection.score)}
-                      fill="#fff"
+                    <polygon
+                      aria-label={`${item.riskId} ${item.projection.isOverdue ? 'missed projection' : 'projected post-mitigation score'} ${item.projection.score}`}
+                      fill={item.projection.isOverdue ? '#fffbeb' : '#fff'}
                       opacity={isActive ? 1 : 0.3}
-                      r={isActive ? 6 : 4.5}
+                      points={`${projectionX},${projectionY - (isActive ? 8 : 6)} ${projectionX + (isActive ? 8 : 6)},${projectionY} ${projectionX},${projectionY + (isActive ? 8 : 6)} ${projectionX - (isActive ? 8 : 6)},${projectionY}`}
+                      role="button"
                       stroke={item.projection.isOverdue ? '#d97706' : color}
-                      strokeDasharray="4 4"
                       strokeWidth={3}
                       style={{cursor: 'pointer'}}
                       onClick={() => onSelectRisk(item.riskId)}
@@ -12347,17 +12371,6 @@ function RiskBurndownChart({
                       }}
                       onMouseMove={(event) => showHoverCard(event, item.riskId, `${item.title} - ${item.projection.isOverdue ? 'missed projection' : 'projected post-mitigation'}`)}
                     />
-                    <text
-                      fill={item.projection.isOverdue ? '#d97706' : color}
-                      fontSize="10"
-                      fontWeight="800"
-                      opacity={isActive ? 0.95 : 0.24}
-                      textAnchor="middle"
-                      x={xForTime(new Date(item.projection.at).getTime())}
-                      y={yForScore(item.projection.score) - 12}
-                    >
-                      {item.projection.isOverdue ? 'missed' : 'projected'}
-                    </text>
                   </g>
                 ) : null}
               </g>
@@ -12365,6 +12378,32 @@ function RiskBurndownChart({
           })}
         </svg>
       </div>
+      {!showLegend ? (
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] font-semibold text-slate-600">
+          <div className="inline-flex items-center gap-2">
+            <span className="relative inline-block h-3 w-8" aria-hidden="true">
+              <span className="absolute left-0 right-0 top-1/2 h-0.5 -translate-y-1/2 bg-slate-500" />
+              <span className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-500" />
+            </span>
+            Recorded score
+          </div>
+          {chartSeries.some((item) => item.projection) ? (
+            <div className="inline-flex items-center gap-2">
+              <span className="relative inline-block h-3 w-8" aria-hidden="true">
+                <span className="absolute left-0 right-0 top-1/2 -translate-y-1/2 border-t-2 border-dashed border-slate-500" />
+                <span className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 border-2 border-slate-500 bg-white" />
+              </span>
+              Projected score
+            </div>
+          ) : null}
+          {chartSeries.some((item) => item.projection?.isOverdue) ? (
+            <div className="inline-flex items-center gap-2 text-amber-700">
+              <span className="h-2.5 w-2.5 rotate-45 border-2 border-amber-600 bg-amber-50" aria-hidden="true" />
+              Missed projection
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {!showLegend && hoverCard ? (
         <div
           className="pointer-events-none absolute z-10 max-w-[220px] rounded-2xl border border-slate-200 bg-white/95 px-3 py-2 shadow-[0_16px_40px_rgba(42,52,57,0.16)] backdrop-blur"
@@ -12379,7 +12418,7 @@ function RiskBurndownChart({
         </div>
       ) : null}
       <div className="mt-3 text-xs leading-relaxed text-on-surface-variant">
-        Filled points indicate score changes that include rationale. Open points indicate baseline or carry-forward points. Solid lines carry open risks forward to today at the saved current score. The teal vertical marker shows today. Dashed lines show future projected post-mitigation scores. Overdue projections appear as amber missed markers at their original due date when they fall inside the selected timeframe.
+        Filled circles indicate score changes that include rationale. Open circles indicate baseline or carry-forward points. Solid lines carry open risks forward to today at the saved current score. The teal vertical marker shows today. Dashed lines ending in outlined diamonds show future projected post-mitigation scores. Overdue projections appear as amber diamonds at their original due date when they fall inside the selected timeframe.
       </div>
     </div>
   );
@@ -12536,9 +12575,9 @@ function RiskStatusBadge({status}: {status: RiskStatus}) {
 function SeverityBadge({severity}: {severity: RiskSeverity}) {
   const classes =
     severity === 'High'
-      ? 'bg-error-container text-on-error-container'
+      ? 'bg-red-100 text-red-800'
       : severity === 'Medium'
-        ? 'bg-secondary-container text-on-secondary-container'
+        ? 'bg-yellow-100 text-yellow-900'
         : 'bg-emerald-100 text-emerald-800';
 
   return <Badge className={classes}>{severity}</Badge>;
@@ -12952,12 +12991,7 @@ function MitigationActionsEditor({
 
   return (
     <div className="space-y-3">
-      {actions.length === 0 ? (
-        <div className="rounded-xl bg-white px-4 py-3 text-sm leading-relaxed text-on-surface-variant ring-1 ring-slate-200/70">
-          No mitigation actions yet. Add specific actions when ownership, due dates, or completion tracking matters.
-        </div>
-      ) : (
-        actions.map((action) => {
+      {actions.map((action) => {
           const actionReference = formatMitigationActionReference(action.id);
           const statusAccent = action.status === 'Done'
             ? 'border-l-emerald-500'
@@ -13075,8 +13109,7 @@ function MitigationActionsEditor({
               </div>
             </details>
           );
-        })
-      )}
+        })}
 
       <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-white px-3 py-3">
         <AutoGrowingTextarea
