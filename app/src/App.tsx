@@ -6807,7 +6807,7 @@ function TrendsAnalyticsPage({
 }) {
   const [burndownTimeframe, setBurndownTimeframe] = useState<BurndownTimeframe>('all');
   const [selectedBurndownRiskIds, setSelectedBurndownRiskIds] = useState<string[]>(() =>
-    risks.map((risk) => risk.id),
+    risks.filter((risk) => !isRetiredRiskStatus(risk.status)).map((risk) => risk.id),
   );
   const [selectedBurndownPoint, setSelectedBurndownPoint] = useState<SelectedBurndownPoint | null>(null);
   const [riskSelectorOpen, setRiskSelectorOpen] = useState(false);
@@ -6873,7 +6873,7 @@ function TrendsAnalyticsPage({
         return retained;
       }
 
-      return risks.map((risk) => risk.id);
+      return risks.filter((risk) => !isRetiredRiskStatus(risk.status)).map((risk) => risk.id);
     });
   }, [risks]);
 
@@ -7239,37 +7239,52 @@ function TrendsAnalyticsPage({
 
         {focusedBurndownSeries ? (
           <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Focused Risk Timeline</div>
-                <div className="mt-1 text-sm font-semibold text-on-surface">
-                  {focusedBurndownSeries.risk.id} · {focusedBurndownSeries.risk.title}
-                </div>
+            <div className="mb-4">
+              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Focused Risk Timeline</div>
+              <div className="mt-1 text-sm font-semibold text-on-surface">
+                {focusedBurndownSeries.risk.id} · {focusedBurndownSeries.risk.title}
               </div>
-              <div className="flex flex-wrap gap-2">
-                {burndownSeries.map((series, index) => (
-                  <button
-                    key={series.risk.id}
-                    className={`rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] transition ${
-                      focusedBurndownSeries.risk.id === series.risk.id
-                        ? 'bg-primary text-white'
-                        : 'bg-white text-slate-700 hover:bg-slate-100'
-                    }`}
-                    onClick={() => {
-                      setFocusedBurndownRiskId(series.risk.id);
-                      if (selectedBurndownPoint?.riskId && selectedBurndownPoint.riskId !== series.risk.id) {
-                        setSelectedBurndownPoint(null);
-                      }
-                    }}
-                    type="button"
-                  >
-                    <span
-                      className="mr-1.5 inline-block h-2 w-2 rounded-full"
-                      style={{backgroundColor: ['#0f8f4f', '#2563eb', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#4f46e5', '#be123c'][index % 8]}}
-                    />
-                    {series.risk.id}
-                  </button>
-                ))}
+              <div className="mt-1 text-xs leading-relaxed text-on-surface-variant">
+                Choose a plotted risk to highlight its graph line and update the timeline below.
+              </div>
+              <div className="mt-3 w-full overflow-x-auto pb-1">
+                <div className="flex w-max gap-2">
+                  {burndownSeries.map((series, index) => {
+                    const focused = focusedBurndownSeries.risk.id === series.risk.id;
+                    return (
+                      <button
+                        key={series.risk.id}
+                        aria-pressed={focused}
+                        className={`flex w-[240px] shrink-0 items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition ${
+                          focused
+                            ? 'border-primary bg-primary/5 shadow-[0_6px_18px_rgba(79,94,126,0.12)]'
+                            : 'border-slate-200 bg-white hover:border-primary/30 hover:bg-slate-50'
+                        }`}
+                        onClick={() => {
+                          setFocusedBurndownRiskId(series.risk.id);
+                          if (selectedBurndownPoint?.riskId && selectedBurndownPoint.riskId !== series.risk.id) {
+                            setSelectedBurndownPoint(null);
+                          }
+                        }}
+                        title={`${series.risk.id} - ${series.risk.title}`}
+                        type="button"
+                      >
+                        <span
+                          className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{backgroundColor: ['#0f8f4f', '#2563eb', '#d97706', '#7c3aed', '#dc2626', '#0891b2', '#4f46e5', '#be123c'][index % 8]}}
+                        />
+                        <span className="min-w-0">
+                          <span className={`block font-mono text-[10px] font-bold tracking-[0.08em] ${focused ? 'text-primary' : 'text-slate-500'}`}>
+                            {series.risk.id}
+                          </span>
+                          <span className="mt-0.5 block truncate text-xs font-semibold text-on-surface">
+                            {series.risk.title}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
             <div className="w-full overflow-x-auto pb-1">
@@ -10621,6 +10636,14 @@ function RiskDrawer({
   }, [risk.id, risk.title, risk.trigger, risk.consequence, risk.because, risk.mitigation, risk.contingency]);
 
   useEffect(() => {
+    setActionDraft((current) => ({
+      ...current,
+      projectedLikelihood: String(risk.likelihood),
+      projectedImpact: String(risk.impact),
+    }));
+  }, [risk.likelihood, risk.impact]);
+
+  useEffect(() => {
     if (!savedFieldLabel) {
       return undefined;
     }
@@ -10636,14 +10659,13 @@ function RiskDrawer({
     return null;
   }
 
-  function getDefaultActionDraft(actions = risk.mitigationActions): MitigationActionDraft {
-    const finalProjection = getFinalMitigationActionProjection(actions);
+  function getDefaultActionDraft(): MitigationActionDraft {
     return {
       title: '',
       owner: '',
       dueDate: '',
-      projectedLikelihood: String(finalProjection?.likelihood ?? risk.residualLikelihood),
-      projectedImpact: String(finalProjection?.impact ?? risk.residualImpact),
+      projectedLikelihood: String(risk.likelihood),
+      projectedImpact: String(risk.impact),
     };
   }
 
@@ -10848,13 +10870,13 @@ function RiskDrawer({
         owner: actionDraft.owner.trim(),
         dueDate: actionDraft.dueDate,
         status: 'Not Started',
-        projectedLikelihood: normalizeScoreValue(actionDraft.projectedLikelihood, risk.residualLikelihood),
-        projectedImpact: normalizeScoreValue(actionDraft.projectedImpact, risk.residualImpact),
+        projectedLikelihood: normalizeScoreValue(actionDraft.projectedLikelihood, risk.likelihood),
+        projectedImpact: normalizeScoreValue(actionDraft.projectedImpact, risk.impact),
       },
     ];
 
     saveMitigationActions(nextActions, 'Mitigation action added');
-    setActionDraft(getDefaultActionDraft(nextActions));
+    setActionDraft(getDefaultActionDraft());
     setSavedFieldLabel('Mitigation action added');
   }
 
@@ -13505,4 +13527,3 @@ function DrawerAction({
     </button>
   );
 }
-
