@@ -11980,17 +11980,15 @@ function RiskBurndownChart({
       : rawTimelineSpan * 0.08;
   const timelineStart = rawTimelineStart - timelinePadding;
   const timelineEnd = rawTimelineEnd + timelinePadding;
-  const width = 1240;
-  const height = showLegend ? 600 : 430;
+  const width = 1160;
   const paddingLeft = 58;
-  const paddingRight = 24;
+  const paddingRight = 18;
   const paddingTop = 54;
-  const paddingBottom = showLegend ? 230 : 60;
-  const panelWidth = 168;
-  const panelGap = 22;
+  const panelWidth = showLegend ? 0 : 132;
+  const panelGap = showLegend ? 0 : 18;
   const plotRight = width - paddingRight - panelWidth - panelGap;
   const plotWidth = plotRight - paddingLeft;
-  const plotHeight = height - paddingTop - paddingBottom;
+  const plotHeight = 316;
   const scoreBands = [
     {from: 0, to: 8, fill: '#d8f0df'},
     {from: 8, to: 15, fill: '#fff5bf'},
@@ -12004,14 +12002,90 @@ function RiskBurndownChart({
   const nowTime = new Date().getTime();
   const showTodayMarker = nowTime >= timelineStart && nowTime <= timelineEnd;
   const panelX = plotRight + panelGap;
-  const legendColumns = 1;
-  const legendColumnWidth = plotRight - paddingLeft;
+  const legendColumns = chartSeries.length > 1 ? 2 : 1;
+  const legendRows = Math.ceil(chartSeries.length / legendColumns);
+  const legendColumnWidth = (width - paddingLeft - paddingRight) / legendColumns;
   const xAxisLabelY = paddingTop + plotHeight + 30;
-  const legendTitleY = paddingTop + plotHeight + 72;
-  const legendStartY = paddingTop + plotHeight + 106;
-  const activeRiskId = hoveredRiskId ?? highlightedRiskId;
-  const projectionLegendY =
-    legendStartY + Math.ceil(Math.min(chartSeries.length, 8) / legendColumns) * 34 + 4;
+  const projectionAxisLabelWidth = 108;
+  const projectionAxisRowHeight = 30;
+  const projectionAxisTopY = xAxisLabelY + 30;
+  const exportProjectionAxisLabels = (() => {
+    if (!showLegend) {
+      return [];
+    }
+
+    const projectedItems = chartSeries
+      .flatMap((item, index) =>
+        item.projection
+          ? [{
+              color: item.projection.isOverdue ? '#d97706' : colorPalette[index % colorPalette.length],
+              date: formatDisplayDate(item.projection.displayDate),
+              isOverdue: item.projection.isOverdue,
+              pointX: xForTime(new Date(item.projection.at).getTime()),
+              pointY: yForScore(item.projection.score),
+              riskId: item.riskId,
+              score: item.projection.score,
+            }]
+          : [],
+      )
+      .sort((left, right) => left.pointX - right.pointX);
+    const rowRightEdges: number[] = [];
+    const minimumLabelX = paddingLeft + projectionAxisLabelWidth / 2;
+    const maximumLabelX = plotRight - projectionAxisLabelWidth / 2;
+
+    return projectedItems.map((item) => {
+      const preferredLabelX = Math.min(Math.max(item.pointX, minimumLabelX), maximumLabelX);
+      const candidates = Array.from({length: rowRightEdges.length + 1}, (_, row) => {
+        const previousRightEdge = rowRightEdges[row] ?? Number.NEGATIVE_INFINITY;
+        const labelX = Math.max(
+          preferredLabelX,
+          previousRightEdge + 8 + projectionAxisLabelWidth / 2,
+        );
+
+        return {
+          cost: labelX <= maximumLabelX ? Math.abs(labelX - item.pointX) + row * 6 : Number.POSITIVE_INFINITY,
+          labelX,
+          row,
+        };
+      });
+      const placement = candidates.reduce((best, candidate) => candidate.cost < best.cost ? candidate : best);
+
+      rowRightEdges[placement.row] = placement.labelX + projectionAxisLabelWidth / 2;
+      return {...item, labelX: placement.labelX, row: placement.row};
+    });
+  })();
+  const exportProjectionScoreGuides = (() => {
+    const scoreGuides = new Map<number, {endX: number; score: number; y: number}>();
+
+    exportProjectionAxisLabels.forEach((label) => {
+      const existingGuide = scoreGuides.get(label.score);
+      scoreGuides.set(label.score, {
+        endX: Math.max(existingGuide?.endX ?? paddingLeft, label.pointX + 12),
+        score: label.score,
+        y: label.pointY,
+      });
+    });
+
+    return [...scoreGuides.values()].sort((left, right) => right.score - left.score);
+  })();
+  const projectionAxisRows = exportProjectionAxisLabels.reduce((maximum, label) => Math.max(maximum, label.row + 1), 0);
+  const legendTitleY = showLegend && projectionAxisRows > 0
+    ? projectionAxisTopY + (projectionAxisRows - 1) * projectionAxisRowHeight + 32
+    : paddingTop + plotHeight + 72;
+  const legendStartY = legendTitleY + 34;
+  const projectionLegendY = legendStartY + legendRows * 40 + 4;
+  const legendContentBottom = chartSeries.some((item) => item.projection)
+    ? projectionLegendY + 20
+    : legendStartY + Math.max(legendRows - 1, 0) * 40 + 24;
+  const height = showLegend ? legendContentBottom + 26 : paddingTop + plotHeight + 60;
+  const activeRiskId = showLegend ? null : hoveredRiskId ?? highlightedRiskId;
+  const displayedXTicks = showLegend
+    ? xTicks.filter((tick, index) =>
+        index === 0 ||
+        index === xTicks.length - 1 ||
+        exportProjectionAxisLabels.every((label) => Math.abs(xForTime(tick) - label.pointX) > 58),
+      )
+    : xTicks;
 
   function showHoverCard(event: ReactMouseEvent<SVGElement>, riskId: string, title: string) {
     const bounds = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
@@ -12058,6 +12132,19 @@ function RiskBurndownChart({
           >
             Selected risks with recorded score history
           </text>
+          {showLegend ? (
+            <text
+              fill="#64748b"
+              fontSize="9.5"
+              fontWeight="800"
+              letterSpacing="0.8"
+              textAnchor="end"
+              x={width - paddingRight}
+              y={28}
+            >
+              HIGH {severityCounts.High} · MEDIUM {severityCounts.Medium} · LOW {severityCounts.Low}
+            </text>
+          ) : null}
 
           {scoreBands.map((band) => (
             <rect
@@ -12094,7 +12181,7 @@ function RiskBurndownChart({
             </g>
           ))}
 
-          {xTicks.map((tick) => (
+          {displayedXTicks.map((tick) => (
             <g key={tick}>
               <text
                 fill="#64748b"
@@ -12151,38 +12238,42 @@ function RiskBurndownChart({
             Risk Score
           </text>
 
-          <line
-            stroke="#cbd5e1"
-            strokeWidth="1"
-            x1={panelX - panelGap / 2}
-            x2={panelX - panelGap / 2}
-            y1={paddingTop}
-            y2={paddingTop + plotHeight}
-          />
+          {!showLegend ? (
+            <>
+              <line
+                stroke="#cbd5e1"
+                strokeWidth="1"
+                x1={panelX - panelGap / 2}
+                x2={panelX - panelGap / 2}
+                y1={paddingTop}
+                y2={paddingTop + plotHeight}
+              />
 
-          <text
-            fill="#64748b"
-            fontSize="10"
-            fontWeight="800"
-            letterSpacing="1.5"
-            textAnchor="start"
-            x={panelX}
-            y={paddingTop + 2}
-          >
-            SEVERITY COUNTS
-          </text>
-          {[
-            {label: 'High', value: severityCounts.High, color: '#dc2626', y: (yForScore(25) + yForScore(15)) / 2},
-            {label: 'Medium', value: severityCounts.Medium, color: '#d97706', y: (yForScore(15) + yForScore(8)) / 2},
-            {label: 'Low', value: severityCounts.Low, color: '#059669', y: (yForScore(8) + yForScore(0)) / 2},
-          ].map((band) => (
-            <g key={band.label}>
-              <circle cx={panelX + 6} cy={band.y - 6} fill={band.color} r="5" />
-              <text fill="#243342" fontSize="12" fontWeight="800" x={panelX + 18} y={band.y - 2}>
-                {band.label}: {band.value}
+              <text
+                fill="#64748b"
+                fontSize="10"
+                fontWeight="800"
+                letterSpacing="1.5"
+                textAnchor="start"
+                x={panelX}
+                y={paddingTop + 2}
+              >
+                SEVERITY COUNTS
               </text>
-            </g>
-          ))}
+              {[
+                {label: 'High', value: severityCounts.High, color: '#dc2626', y: (yForScore(25) + yForScore(15)) / 2},
+                {label: 'Medium', value: severityCounts.Medium, color: '#d97706', y: (yForScore(15) + yForScore(8)) / 2},
+                {label: 'Low', value: severityCounts.Low, color: '#059669', y: (yForScore(8) + yForScore(0)) / 2},
+              ].map((band) => (
+                <g key={band.label}>
+                  <circle cx={panelX + 6} cy={band.y - 6} fill={band.color} r="5" />
+                  <text fill="#243342" fontSize="12" fontWeight="800" x={panelX + 18} y={band.y - 2}>
+                    {band.label}: {band.value}
+                  </text>
+                </g>
+              ))}
+            </>
+          ) : null}
 
           {showLegend ? (
             <>
@@ -12195,12 +12286,12 @@ function RiskBurndownChart({
                 x={paddingLeft}
                 y={legendTitleY}
               >
-                RISK LEGEND
+                RISK LEGEND · {chartSeries.length} {chartSeries.length === 1 ? 'RISK' : 'RISKS'}
               </text>
-              {chartSeries.slice(0, 8).map((item, index) => {
+              {chartSeries.map((item, index) => {
                 const columnIndex = index % legendColumns;
                 const rowIndex = Math.floor(index / legendColumns);
-                const legendY = legendStartY + rowIndex * 34;
+                const legendY = legendStartY + rowIndex * 40;
                 const legendX = paddingLeft + columnIndex * legendColumnWidth;
                 const color = colorPalette[index % colorPalette.length];
                 return (
@@ -12211,7 +12302,7 @@ function RiskBurndownChart({
                       {item.riskId}
                     </text>
                     <text fill="#64748b" fontSize="10" x={legendX + 26} y={legendY + 18}>
-                      {item.title.length > 64 ? `${item.title.slice(0, 64)}…` : item.title}
+                      {item.title.length > 58 ? `${item.title.slice(0, 58)}…` : item.title}
                     </text>
                   </g>
                 );
@@ -12242,11 +12333,91 @@ function RiskBurndownChart({
                     x={paddingLeft + 52}
                     y={projectionLegendY + 4}
                   >
-                    DASHED LINE + DIAMOND = PROJECTED POST-MITIGATION SCORE
+                    DIAMOND = PROJECTED RISK · HORIZONTAL GUIDE = SCORE · VERTICAL GUIDE = DATE
                   </text>
                 </g>
               ) : null}
             </>
+          ) : null}
+
+          {showLegend ? (
+            <g aria-label="Projected score guides" pointerEvents="none">
+              {exportProjectionScoreGuides.map((guide) => (
+                <g key={`projection-score-${guide.score}`}>
+                  <line
+                    stroke="#475569"
+                    strokeDasharray="4 5"
+                    strokeOpacity="0.6"
+                    strokeWidth="1.4"
+                    x1={paddingLeft + 30}
+                    x2={Math.min(guide.endX, plotRight)}
+                    y1={guide.y}
+                    y2={guide.y}
+                  />
+                  <rect
+                    fill="#ffffff"
+                    height="18"
+                    rx="9"
+                    stroke="#64748b"
+                    strokeWidth="1.2"
+                    width="22"
+                    x={paddingLeft + 4}
+                    y={guide.y - 9}
+                  />
+                  <text
+                    fill="#334155"
+                    fontSize="10"
+                    fontWeight="900"
+                    textAnchor="middle"
+                    x={paddingLeft + 15}
+                    y={guide.y + 3.5}
+                  >
+                    {guide.score}
+                  </text>
+                </g>
+              ))}
+            </g>
+          ) : null}
+
+          {showLegend ? (
+            <g aria-label="Projected risk date guides">
+              {exportProjectionAxisLabels.map((label) => {
+                const guideY = projectionAxisTopY + label.row * projectionAxisRowHeight - 18;
+                return (
+                  <g key={`projection-guide-${label.riskId}`} pointerEvents="none">
+                    <path
+                      d={`M ${label.pointX} ${label.pointY + 10} L ${label.pointX} ${guideY} L ${label.labelX} ${guideY}`}
+                      fill="none"
+                      stroke={label.color}
+                      strokeDasharray="3 5"
+                      strokeOpacity="0.58"
+                      strokeWidth="1.4"
+                    />
+                    <circle cx={label.labelX} cy={guideY} fill={label.color} r="2.5" />
+                    <text
+                      fill={label.color}
+                      fontSize="9.5"
+                      fontWeight="900"
+                      textAnchor="middle"
+                      x={label.labelX}
+                      y={guideY + 13}
+                    >
+                      {label.riskId}
+                    </text>
+                    <text
+                      fill="#64748b"
+                      fontSize="9"
+                      fontWeight="700"
+                      textAnchor="middle"
+                      x={label.labelX}
+                      y={guideY + 25}
+                    >
+                      {label.isOverdue ? 'Missed · ' : ''}{label.date}
+                    </text>
+                  </g>
+                );
+              })}
+            </g>
           ) : null}
 
           {chartSeries.map((item, index) => {
@@ -12272,7 +12443,7 @@ function RiskBurndownChart({
                   stroke={color}
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  strokeWidth={isActive ? 5 : 3}
+                  strokeWidth={showLegend ? 3.5 : isActive ? 5 : 3}
                   style={{cursor: 'pointer'}}
                   onClick={() => onSelectRisk(item.riskId)}
                   onMouseEnter={(event) => {
@@ -12287,7 +12458,7 @@ function RiskBurndownChart({
                 />
                 {item.points.map((point) => {
                   const isSelected =
-                    selectedPoint?.riskId === item.riskId && selectedPoint.at === point.at;
+                    !showLegend && selectedPoint?.riskId === item.riskId && selectedPoint.at === point.at;
                   const hasRationale = Boolean(point.rationale);
                   const pointX = xForTime(new Date(point.at).getTime());
                   const pointY = yForScore(point.score);
@@ -12330,7 +12501,7 @@ function RiskBurndownChart({
                         cy={pointY}
                         fill={hasRationale ? color : '#fff'}
                         opacity={isActive ? 1 : 0.3}
-                        r={isSelected ? 7 : isActive ? 5.5 : 4.5}
+                        r={isSelected ? 7 : showLegend ? 5 : isActive ? 5.5 : 4.5}
                         stroke={color}
                         strokeWidth={isSelected ? 4 : hasRationale ? 2.5 : 3}
                         style={{cursor: 'pointer'}}
@@ -12359,7 +12530,7 @@ function RiskBurndownChart({
                         strokeDasharray="10 10"
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        strokeWidth={isActive ? 4 : 2.5}
+                        strokeWidth={showLegend ? 3 : isActive ? 4 : 2.5}
                         style={{cursor: 'pointer'}}
                         onClick={() => onSelectRisk(item.riskId)}
                         onMouseEnter={(event) => {
@@ -12377,7 +12548,7 @@ function RiskBurndownChart({
                       aria-label={`${item.riskId} ${item.projection.isOverdue ? 'missed projection' : 'projected post-mitigation score'} ${item.projection.score}`}
                       fill={item.projection.isOverdue ? '#fffbeb' : '#fff'}
                       opacity={isActive ? 1 : 0.3}
-                      points={`${projectionX},${projectionY - (isActive ? 8 : 6)} ${projectionX + (isActive ? 8 : 6)},${projectionY} ${projectionX},${projectionY + (isActive ? 8 : 6)} ${projectionX - (isActive ? 8 : 6)},${projectionY}`}
+                      points={`${projectionX},${projectionY - (showLegend ? 8 : isActive ? 8 : 6)} ${projectionX + (showLegend ? 8 : isActive ? 8 : 6)},${projectionY} ${projectionX},${projectionY + (showLegend ? 8 : isActive ? 8 : 6)} ${projectionX - (showLegend ? 8 : isActive ? 8 : 6)},${projectionY}`}
                       role="button"
                       stroke={item.projection.isOverdue ? '#d97706' : color}
                       strokeWidth={3}
@@ -12398,6 +12569,7 @@ function RiskBurndownChart({
               </g>
             );
           })}
+
         </svg>
       </div>
       {!showLegend ? (
